@@ -16,21 +16,49 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 OUT="$ROOT/site/site.yaml"
 mkdir -p "$ROOT/site"
 
+. "$ROOT/versions.env" 2>/dev/null || true
+
+# Searches must skip our own artefacts. Inventory captures COPY config files, so
+# an unfiltered find happily "discovers" a snapshot of a file instead of the
+# file, and snapshots of different vintages disagree with each other.
+noise() { grep -vE "$ROOT/stack/|/aerial-inventory-|/ran-recipe-|\.bak|\.orig|/site/"; }
+
 CU="${1:-}"; GNB="${2:-}"
+
+# Candidates are ranked, never taken arbitrarily: several generations of the
+# same file exist here and they hold DIFFERENT values. Show them all.
 if [ -z "$CU" ]; then
-  # Prefer a cuphycontroller config that is locally modified: stock templates
-  # carry the vendor's reference values, not this deployment's.
+  echo ">> cuphycontroller candidates (locally modified only):"
   while read -r f; do
-    d="$(cd "$(dirname "$f")" && git rev-parse --show-toplevel 2>/dev/null)" || continue
-    case "$d" in "$ROOT/stack"/*) continue ;; esac
-    git -C "$d" status -s -- "$f" 2>/dev/null | grep -q '^ *M' && { CU="$f"; break; }
-  done < <(find "$HOME" -maxdepth 9 -name 'cuphycontroller_*.yaml' 2>/dev/null)
-fi
-if [ -z "$GNB" ]; then
-  GNB="$(find "$HOME" -maxdepth 9 -name '*aerial.conf' 2>/dev/null \
-         | grep -v "$ROOT/stack" | head -1)"
+    d="$(cd "$(dirname "$f")" 2>/dev/null && git rev-parse --show-toplevel 2>/dev/null)" || continue
+    git -C "$d" status -s -- "$f" 2>/dev/null | grep -q '^ *M' || continue
+    sdk="$(grep -m1 -E '^aerial_sdk_version:' "$f" | awk '{print $2}')"
+    printf '     %s\n        sdk=%s  tree=%s\n' "$f" "${sdk:-?}" "$(git -C "$d" describe --tags --always 2>/dev/null)"
+    # Rank: the SDK version must match the release we are deploying; among
+    # those prefer the profile for this platform (DGX Spark uses the DGX one).
+    if [ "$sdk" = "$AERIAL_TAG" ]; then
+      case "$f" in *_DGX*) CU="$f" ;; *) [ -z "$CU" ] && CU="$f" ;; esac
+    fi
+  done < <(find "$HOME" -maxdepth 9 -name 'cuphycontroller_*.yaml' 2>/dev/null | noise)
 fi
 
+if [ -z "$GNB" ]; then
+  echo ">> gNB config candidates (AMF address shown — they may disagree):"
+  while read -r f; do
+    amf="$(grep -m1 -oE 'ipv4[[:space:]]*=[[:space:]]*"[0-9.]+"' "$f" | grep -oE '[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+')"
+    d="$(cd "$(dirname "$f")" 2>/dev/null && git rev-parse --show-toplevel 2>/dev/null)"
+    tracked=""; [ -n "$d" ] && git -C "$d" status -s -- "$f" 2>/dev/null | grep -q '^ *M' && tracked="(modified in git)"
+    printf '     %s\n        amf=%s %s\n' "$f" "${amf:-?}" "$tracked"
+    # A file that git reports as modified inside a real checkout is the one
+    # somebody edited; a loose copy is just a copy.
+    [ -n "$tracked" ] && [ -z "$GNB" ] && GNB="$f"
+  done < <(find "$HOME" -maxdepth 9 -name '*aerial*.conf' 2>/dev/null | noise)
+  # Nothing tracked? fall back, but say so.
+  [ -z "$GNB" ] && GNB="$(find "$HOME" -maxdepth 9 -name '*aerial*.conf' 2>/dev/null | noise | head -1)" \
+                && echo "     (none tracked in git — falling back to the first match)"
+fi
+
+echo
 echo ">> reading parameters from (nothing is modified):"
 echo "   L1 : ${CU:-NOT FOUND}"
 echo "   L2 : ${GNB:-NOT FOUND}"
