@@ -99,12 +99,18 @@ fi
 # encodes RBstart and length for that PRB count and is NOT templated here, so
 # starting from the wrong one yields a subtly wrong initial bandwidth part.
 CONFD="$STACK/openairinterface5g/targets/PROJECTS/GENERIC-NR-5GC/CONF"
-PRB="$(s .cell.prb)"
-GT="$(ls "$CONFD"/*band$(s .cell.band).${PRB}prb*aerial*.conf 2>/dev/null | grep -v ul-heavy | head -1)"
+PRB="$(s .cell.prb)"; BAND="$(s .cell.band)"
+# Require a name ending exactly in ".aerial.conf". OAI also ships variants like
+# .aerial.20.conf, .aerial.21.conf and .aerial.ul-heavy.conf, and "2" sorts
+# before "c" so an alphabetical pick lands on .20 -- a different cell's config
+# whose other parameters we do not template.
+GT="$(ls "$CONFD"/*band${BAND}.${PRB}prb*.aerial.conf 2>/dev/null | head -1)"
 if [ -z "$GT" ]; then
-  GT="$(ls "$CONFD"/*band*aerial*.conf 2>/dev/null | grep -v ul-heavy | head -1)"
-  [ -n "$GT" ] && echo ">> WARNING: no ${PRB}prb template; falling back to $(basename "$GT")." \
-               && echo "   Check initialDLBWPlocationAndBandwidth by hand — it is PRB-specific."
+  echo ">> No canonical band${BAND}/${PRB}prb aerial template. Candidates:"
+  ls -1 "$CONFD"/*aerial*.conf 2>/dev/null | sed 's|.*/|     |'
+  echo ">> Refusing to guess: variants differ in parameters this script does not"
+  echo "   template (initialDLBWPlocationAndBandwidth, MACRLC tuning)."
+  exit 1
 fi
 L2="$OUT/gnb.conf"
 if [ -n "$GT" ]; then
@@ -138,6 +144,53 @@ if [ -n "$GT" ]; then
   sed -i -E "s|(GNB_IPV4_ADDRESS_FOR_NGU[^\"]*\")[0-9./]+|\1$(s .core.gnb_n2_ip)|" "$L2"
 else
   echo ">> WARNING: no gNB template found under stack/openairinterface5g — skipping L2"
+fi
+
+# ---------------------------------------------------------------- verify
+# Both sed and yq no-op silently when a key is absent from the template. A
+# template variant missing one key would otherwise deploy with the upstream
+# value and look, in the diff, exactly like "nothing needed changing".
+vfail=0
+ck() { # ck <label> <want> <got>
+  if [ "$2" = "$3" ]; then printf '  ok    %-30s %s\n' "$1" "$3"
+  else printf '  FAIL  %-30s want=%s got=%s\n' "$1" "$2" "${3:-<absent>}"; vfail=1; fi
+}
+echo
+echo "===== verification: did every value land? ====="
+ck "L1 cell0 dst_mac" "$RU_MAC" "$(yq ".cuphydriver_config.$CELLS[0].dst_mac_addr" "$L1")"
+ck "L1 cell0 vlan"    "$VLAN"   "$(yq ".cuphydriver_config.$CELLS[0].vlan" "$L1")"
+ck "L1 cell0 pcp"     "$PCP"    "$(yq ".cuphydriver_config.$CELLS[0].pcp" "$L1")"
+ck "L1 cell0 nic"     "$NIC"    "$(yq ".cuphydriver_config.$CELLS[0].nic" "$L1")"
+for t in T1a_min_cp_dl_ns Ta4_max_ns; do
+  want="$(s ".ru.timing.$t")"
+  [ -n "$want" ] && [ "$want" != "0" ] && ck "L1 $t" "$want" "$(yq ".cuphydriver_config.$CELLS[0].$t" "$L1")"
+done
+if [ "$(s .dapp.enabled)" = "true" ]; then
+  ck "L1 data_core" "$(s .cpu.data_core)" "$(yq '.cuphydriver_config.data_config.data_core' "$L1")"
+  ck "L1 e3_agent_enable" "1" "$(yq '.cuphydriver_config.data_config.e3_agent_enable' "$L1")"
+fi
+if [ -f "${L2:-}" ]; then
+  gv() { grep -m1 -E "^[[:space:]]*$1[[:space:]]*=" "$L2" \
+         | sed -E 's/^[^=]*=[[:space:]]*//; s/[;,].*//; s/[[:space:]]*#.*//' | tr -d '"L '; }
+  ck "L2 physCellId"   "$(s .cell.phys_cell_id)" "$(gv physCellId)"
+  ck "L2 nr_cellid"    "$(s .cell.nr_cellid)"    "$(gv nr_cellid)"
+  ck "L2 prach index"  "$(s .cell.prach_configuration_index)" "$(gv prach_ConfigurationIndex)"
+  ck "L2 dl_carrierBW" "$PRB" "$(gv dl_carrierBandwidth)"
+  ck "L2 SSB arfcn"    "$(s .cell.absolute_frequency_ssb)" "$(gv absoluteFrequencySSB)"
+  ck "L2 dl_slots"     "$(s .cell.tdd.dl_slots)"   "$(gv nrofDownlinkSlots)"
+  ck "L2 ul_symbols"   "$(s .cell.tdd.ul_symbols)" "$(gv nrofUplinkSymbols)"
+  ck "L2 pusch ports"  "$(s .cell.pusch_antenna_ports)" "$(gv pusch_AntennaPorts)"
+  ck "L2 tr_s_poll_core" "$(s .cpu.oai_poll_core)" "$(gv tr_s_poll_core)"
+  ck "L2 amf_ip" "$(s .core.amf_ip)" \
+     "$(grep -m1 -oE 'ipv4[^"]*"[0-9.]+' "$L2" | grep -oE '[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+')"
+  ck "L2 gnb_n2_ip" "$(s .core.gnb_n2_ip)" \
+     "$(grep -m1 -oE 'GNB_IPV4_ADDRESS_FOR_NG_AMF[^"]*"[0-9./]+' "$L2" | grep -oE '[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+')"
+fi
+if [ "$vfail" != 0 ]; then
+  echo
+  echo ">> Some values did not reach the rendered config. NOT safe to deploy."
+  echo "   A FAIL usually means the chosen template lacks that key."
+  exit 1
 fi
 
 # ---------------------------------------------------------------- review
