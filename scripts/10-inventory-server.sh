@@ -43,8 +43,13 @@ done
 G="$OUT/gpu/gpu.txt"
 have nvidia-smi && { run "$G" nvidia-smi; run "$G" nvidia-smi -q; run "$G" nvidia-smi topo -m; }
 have nvidia-smi && nvidia-smi -q -x > "$OUT/gpu/nvidia-smi.xml" 2>&1
-run "$G" env    # capture CUDA_* / CUDA_MPS_* if set in this shell
-$S ls -l /tmp/nvidia-mps /var/log/nvidia-mps 2>&1 > "$OUT/gpu/mps.txt"
+# Only CUDA/MPS/Aerial vars. NEVER dump the whole environment: it routinely
+# holds NGC_API_KEY / registry tokens, and this output gets shared.
+{ echo "### \$ env (filtered)"
+  env | grep -E '^(CUDA|NVIDIA|MPS|AERIAL|CUBB|NVIPC)' \
+      | grep -viE 'key|token|secret|password|passwd|auth'
+  echo; } >> "$G" 2>&1
+$S ls -l /tmp/nvidia-mps /var/log/nvidia-mps > "$OUT/gpu/mps.txt" 2>&1
 lsmod | grep -iE 'nvidia|nvme|gdrdrv|peermem|mlx|ib_' > "$OUT/gpu/modules.txt" 2>&1
 have nvcc && run "$G" nvcc --version
 have dpkg && dpkg -l | grep -iE 'cuda|nvidia|doca|ofed|rshim|aerial' > "$OUT/gpu/packages.txt" 2>&1
@@ -195,9 +200,17 @@ grep -rilE 'benetel|ran550|ran-550' /etc /opt "$HOME" 2>/dev/null | head -40 > "
 while read -r f; do
   [ -f "$f" ] && { echo "=== $f ==="; head -100 "$f"; echo; } >> "$R/benetel-files.txt" 2>&1
 done < "$R/benetel-references.txt"
-# fronthaul MAC/VLAN/eAxC as configured on the L1 side
-grep -rhiE 'src_mac|dst_mac|vlan|eaxc|nic|pcie|cell_group|band|prach' \
-  $(cat "$A/config-files-found.txt" 2>/dev/null) 2>/dev/null | head -200 > "$R/fronthaul-params.txt"
+# fronthaul MAC/VLAN/eAxC as configured on the L1 side.
+# Guard the empty case: `grep -r` with no file operands would recurse the
+# current directory instead, which is slow and captures the wrong thing.
+if [ -s "$A/config-files-found.txt" ]; then
+  xargs -r -d '\n' -a "$A/config-files-found.txt" \
+    grep -hiE 'src_mac|dst_mac|vlan|eaxc|nic|pcie|cell_group|band|prach' 2>/dev/null \
+    | head -200 > "$R/fronthaul-params.txt"
+else
+  echo "no Aerial config files found on the host filesystem" > "$R/fronthaul-params.txt"
+  echo "(if the stack ran in containers, look in docker/inspect-*.json mounts)" >> "$R/fronthaul-params.txt"
+fi
 have netopeer2-cli && echo "netopeer2-cli present (M-plane NETCONF client)" >> "$R/ru.txt"
 
 # ---------------------------------------------------------------- wrap up
