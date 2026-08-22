@@ -108,12 +108,25 @@ spec:
               {{- if .Values.hugepages.enabled }}
               hugepages-{{ .Values.hugepages.size }}: {{ .Values.hugepages.amount }}
               {{- end }}
-            # NOTE: deliberately no cpu limit. cuphycontroller pins its threads
-            # to ABSOLUTE core ids from its YAML (workers_ul, workers_dl,
-            # dpdk_thread, low_priority_core, data_core). Kubernetes' static CPU
-            # manager hands out whichever exclusive cores it likes, which would
-            # not be those ids -- so a cpu limit here fights the config instead
-            # of helping. Isolation is already done at boot with isolcpus.
+            requests:
+              # Kubernetes forbids a hugepages request without cpu or memory
+              # alongside it, so this is required, not decorative.
+              #
+              # A memory REQUEST, never a limit: a limit would let the kernel
+              # OOM-kill the L1 mid-slot, and an L1 that dies mid-slot takes
+              # the cell down. A request only informs scheduling.
+              memory: {{ .Values.l1.memoryRequest }}
+              {{- if .Values.hugepages.enabled }}
+              hugepages-{{ .Values.hugepages.size }}: {{ .Values.hugepages.amount }}
+              {{- end }}
+            # NOTE: deliberately no cpu request or limit. cuphycontroller pins
+            # its threads to ABSOLUTE core ids from its YAML (workers_ul,
+            # workers_dl, dpdk_thread, low_priority_core, data_core), whereas
+            # the kubelet's static CPU manager hands out whichever exclusive
+            # cores it likes -- and it only does so for Guaranteed pods with
+            # integer cpu. Requesting memory alone keeps this Burstable, so
+            # nothing competes with Aerial's own affinity. Core isolation is
+            # already done at boot via isolcpus.
           # The L1 prints this once the fronthaul is up and cuPHY is running.
           readinessProbe:
             exec:

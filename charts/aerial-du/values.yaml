@@ -21,6 +21,9 @@ l1:
   # (or build/... ). A source-only checkout will not start.
   cubbHostPath: /opt/aerial/cuBB
   logHostPath: /var/log/aerial
+  # Required: Kubernetes rejects a hugepages request that has no cpu or memory
+  # beside it. A request, not a limit -- see the note in the template.
+  memoryRequest: 8Gi
 
 l2:
   image:
