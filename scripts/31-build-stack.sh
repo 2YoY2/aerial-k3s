@@ -107,25 +107,37 @@ build_l1() {
 build_l2() {
   [ -d "$OAI_SRC" ] || die "missing $OAI_SRC — run ./scripts/21-fetch-stack.sh"
 
-  step "L2: staging nvIPC sources out of the Aerial container"
-  # Copy from the image, not from any previous deployment's tarball, so the
-  # nvIPC version always matches the Aerial release being deployed.
-  local cid
-  cid="$(docker create "$AERIAL_IMAGE:$AERIAL_TAG")" || die "could not create helper container"
-  local staged=0
-  for p in /opt/nvidia/cuBB/cuPHY-CP/gt_common_libs /opt/cuBB/cuPHY-CP/gt_common_libs; do
-    if docker cp "$cid:$p" "$OAI_SRC/.nvipc-stage" 2>/dev/null; then staged=1; break; fi
-  done
-  docker rm -f "$cid" >/dev/null 2>&1
-  if [ "$staged" = 1 ]; then
-    local tb
-    tb="$(find "$OAI_SRC/.nvipc-stage" -name 'nvipc_src*.tar.gz' | sort | tail -1)"
-    [ -n "$tb" ] && { cp "$tb" "$OAI_SRC/"; echo "   staged $(basename "$tb")"; } \
-                 || echo "   no nvipc_src tarball inside the image (may be prebuilt in it)"
-    rm -rf "$OAI_SRC/.nvipc-stage"
+  step "L2: staging nvIPC sources"
+  # The gNB Dockerfile does `tar -xvzf nvipc_src.*.tar.gz` at the root of the
+  # build context, so the tarball must land in the OAI tree before we build.
+  #
+  # Take it from the Aerial SOURCE tree: it is the same pinned release we are
+  # deploying, it is already on disk, and no container is needed. Falling back
+  # to the image means asking the image where it keeps the file rather than
+  # guessing paths -- guessing is what broke this before.
+  rm -rf "$OAI_SRC/.nvipc-stage"
+  local tb=""
+  tb="$(ls -1 "$AERIAL_SRC"/cuPHY-CP/gt_common_libs/nvipc_src.*.tar.gz 2>/dev/null | sort | tail -1)"
+  if [ -n "$tb" ]; then
+    echo "   from the pinned Aerial source tree: $(basename "$tb")"
   else
-    echo "   could not read gt_common_libs from the image; continuing"
+    echo "   not in the source tree; asking the image where it keeps nvIPC"
+    local found cid
+    found="$(docker run --rm --entrypoint bash "$AERIAL_IMAGE:$AERIAL_TAG" -lc \
+             "find / -name 'nvipc_src*.tar.gz' -not -path '/proc/*' 2>/dev/null | sort | tail -1" 2>/dev/null)"
+    if [ -n "$found" ]; then
+      cid="$(docker create "$AERIAL_IMAGE:$AERIAL_TAG")" || die "could not create helper container"
+      docker cp "$cid:$found" "$OAI_SRC/" >/dev/null 2>&1
+      docker rm -f "$cid" >/dev/null 2>&1
+      tb="$OAI_SRC/$(basename "$found")"
+      echo "   extracted from the image: $(basename "$found")"
+    fi
   fi
+  # Do not "continue" without it. The build would run for a few seconds and die
+  # inside the Dockerfile on an opaque tar error instead of here, with a reason.
+  [ -n "$tb" ] && [ -f "$tb" ] || die "no nvipc_src tarball found in $AERIAL_SRC/cuPHY-CP/gt_common_libs/ or in the Aerial image — the gNB cannot be built with the FAPI split without it"
+  cp -f "$tb" "$OAI_SRC/" 2>/dev/null || true
+  ls -1 "$OAI_SRC"/nvipc_src.*.tar.gz | sed 's|.*/|   staged: |'
 
   step "L2: building the OAI gNB image with the Aerial FAPI split"
   local df
