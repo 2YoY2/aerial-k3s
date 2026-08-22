@@ -57,7 +57,7 @@ if [ -n "${AERIAL:-}" ]; then
   # Record exactly what the derivation changed, so it can be re-applied to a
   # future Aerial release instead of re-derived from scratch.
   git -C "$AERIAL" diff > "$DEST/aerial-site.patch" 2>/dev/null \
-    && echo "   took: aerial-site.patch ($(grep -c '^@@' "$DEST/aerial-site.patch") hunks)"
+    && { echo "   took: aerial-site.patch ($(grep -c '^@@' "$DEST/aerial-site.patch") hunks)"; copied=$((copied+1)); }
 fi
 
 if [ -n "${OAI:-}" ]; then
@@ -65,7 +65,7 @@ if [ -n "${OAI:-}" ]; then
   take "$OAI/targets/PROJECTS/GENERIC-NR-5GC/CONF/gnb-vnf.sa.band78.273prb.aerial.conf" "gNB L2/L3 config"
   take "$D/docker-compose.yaml" "reference launch topology"
   git -C "$OAI" diff > "$DEST/oai-site.patch" 2>/dev/null \
-    && echo "   took: oai-site.patch ($(grep -c '^@@' "$DEST/oai-site.patch") hunks)"
+    && { echo "   took: oai-site.patch ($(grep -c '^@@' "$DEST/oai-site.patch") hunks)"; copied=$((copied+1)); }
 fi
 
 echo
