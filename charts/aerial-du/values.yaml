@@ -7,6 +7,10 @@
 
 nameOverride: ""
 
+# Set by 34-deploy-du.sh to the hash of the rendered configs, so that a
+# changed config actually restarts the pod. See templates/deployment.yaml.
+configHash: ""
+
 l1:
   image:
     repository: nvcr.io/nvidia/aerial/aerial-cuda-accelerated-ran

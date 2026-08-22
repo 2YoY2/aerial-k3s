@@ -77,11 +77,20 @@ else
   SHARE=""
 fi
 
+# The rendered configs are delivered by hostPath, which Helm cannot hash. Do it
+# ourselves and put it in the pod annotations, otherwise a re-render produces an
+# identical pod spec, no restart, and a "successful" deploy still running the
+# previous configuration.
+CFGHASH="$(cat "$RENDERED"/cuphycontroller_site.yaml "$RENDERED"/gnb.conf \
+             "$CFGDIR/$L2A" 2>/dev/null | sha256sum | cut -c1-16)"
+echo "   config hash: $CFGHASH"
+
 step "Deploying $REL to namespace $NS"
 helm upgrade --install "$REL" "$ROOT/charts/aerial-du" -n "$NS" \
   --set l1.cubbHostPath="$AERIAL_SRC" \
   --set l1.configProfile=site \
   --set l1.sharePath="$SHARE" \
+  --set configHash="$CFGHASH" \
   --set l1.image.repository="$AERIAL_IMAGE" \
   --set l1.image.tag="$AERIAL_TAG" \
   "${GNB_ARG[@]}" \

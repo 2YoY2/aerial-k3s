@@ -31,6 +31,14 @@ spec:
     metadata:
       labels:
         app.kubernetes.io/name: {{ $name }}
+      {{- if .Values.configHash }}
+      annotations:
+        # Hash of the rendered L1/L2 configs. Those live on a hostPath, not in
+        # a ConfigMap, so Helm cannot see them change -- without this the pod
+        # spec is identical across releases and a re-render silently leaves the
+        # OLD config running while every log line says the deploy succeeded.
+        aerial-k3s/config-hash: {{ .Values.configHash | quote }}
+      {{- end }}
     spec:
       {{- if .Values.hostNetwork }}
       hostNetwork: true
