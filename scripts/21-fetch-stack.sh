@@ -39,9 +39,14 @@ clone_at() {
 
 # ---------------------------------------------------------------- Aerial L1
 step "Aerial L1 image: $AERIAL_IMAGE:$AERIAL_TAG"
-if ! grep -q 'nvcr.io' "$HOME/.docker/config.json" 2>/dev/null; then
+# Check for the image BEFORE checking credentials: a box that already has it
+# needs no NGC login at all, and demanding one there is just a false alarm.
+if docker image inspect "$AERIAL_IMAGE:$AERIAL_TAG" >/dev/null 2>&1; then
+  echo "   already present locally — no NGC login needed"
+  echo "   id: $(docker image inspect -f '{{.Id}}' "$AERIAL_IMAGE:$AERIAL_TAG" | cut -c8-19)"
+elif ! grep -q 'nvcr.io' "$HOME/.docker/config.json" 2>/dev/null; then
   cat <<'MSG'
-   Not logged in to nvcr.io. Run this yourself, then re-run this script:
+   Image absent and not logged in to nvcr.io. Run this yourself, then re-run:
 
        docker login nvcr.io
 
@@ -49,8 +54,6 @@ if ! grep -q 'nvcr.io' "$HOME/.docker/config.json" 2>/dev/null; then
    Password is your NGC API key from https://ngc.nvidia.com  (Setup > API Key)
 MSG
   fail=1
-elif docker image inspect "$AERIAL_IMAGE:$AERIAL_TAG" >/dev/null 2>&1; then
-  echo "   already present, skipping (~26 GB)"
 else
   echo "   pulling ~26 GB, this takes a while..."
   docker pull "$AERIAL_IMAGE:$AERIAL_TAG" || { echo "   pull failed"; fail=1; }
