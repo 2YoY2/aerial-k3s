@@ -3,17 +3,48 @@
 Deploy a complete 5G network (OAI core + gNB + UE) on Kubernetes, learn to scale it
 up/down, and prepare the path to NVIDIA Aerial for GPU-accelerated L1.
 
+There are two tracks. Pick by what hardware you have:
+
+- **Track A — learn the Kubernetes side on any x86 box** (scripts `00`–`06`).
+  OAI core + gNB + UE in RF-simulator mode: no radio, no GPU, no special NIC.
+  This is where the scaling exercises live.
+- **Track B — the real GPU-accelerated RAN** (scripts `20`–`22`). NVIDIA Aerial
+  L1 + OAI L2/L3 + a dApp, on an Aerial-capable host with an O-RAN 7.2 radio.
+  Start at [docs/VERSIONS.md](docs/VERSIONS.md) — version pairing is the thing
+  that will bite you.
+
 ```
 aerial-k3s/
 ├── README.md            ← you are here (the plan)
-├── docs/AERIAL.md       ← NVIDIA Aerial integration path (read after Phase 6)
-├── scripts/             ← one script per phase, numbered in order
-│   ├── 10-inventory-server.sh   ← read-only capture of an existing Aerial host
-│   └── fetch-charts.sh          ← pulls the upstream OAI charts (auto-run)
-├── values/              ← Helm value overrides used by the scripts
-└── orchestration/       ← official OAI Helm charts — NOT in git, fetched by
-                           fetch-charts.sh from
-                           github.com/openairinterface/orchestration
+├── versions.env         ← pinned, mutually-validated version set
+├── docs/
+│   ├── VERSIONS.md      ← verified matrix + what is NOT verified. Read first.
+│   └── AERIAL.md        ← how Aerial slots in under an OAI L2
+├── scripts/
+│   ├── 00–06            ← Track A: tools → cluster → core → RAN → verify → scale
+│   ├── 10, 11, 12       ← inspect an existing deployment (read-only, redacted)
+│   ├── 20-preflight.sh  ← Track B: is this host Aerial-ready? (read-only)
+│   ├── 21-fetch-stack.sh← Track B: pull Aerial image + OAI + dApp sources
+│   ├── 22-build-dapp.sh ← Track B: build/run the PRB-Power reference dApp
+│   ├── install-guardrails.sh ← pre-commit hook blocking site data
+│   └── fetch-charts.sh  ← pulls the upstream OAI charts (auto-run)
+├── values/              ← Helm value overrides
+├── site/                ← UNTRACKED: your deployment's values
+├── orchestration/       ← NOT in git: OAI Helm charts, fetched on demand
+└── stack/               ← NOT in git: Aerial + OAI + sample-app sources
+```
+
+## Track B quick start
+
+Host preparation — driver, kernel, DOCA/OFED, hugepages, CPU isolation, NIC
+firmware, PTP — is **out of scope** here: it is done once per box from NVIDIA's
+install guide. Everything from the RAN software up is fetched from scratch.
+
+```bash
+./scripts/20-preflight.sh      # verify the host; changes nothing
+docker login nvcr.io           # you do this; the scripts never touch your key
+./scripts/21-fetch-stack.sh    # Aerial image (~26 GB) + OAI + dApp sources
+./scripts/22-build-dapp.sh     # PRB-Power dApp over the E3 interface
 ```
 
 ## Site-specific configuration

@@ -1,0 +1,97 @@
+# Verified version matrix — Aerial + OAI + dApp on GB10 (DGX Spark)
+
+Researched 2026-08-22. Pins live in [`versions.env`](../versions.env); override
+per-deployment values in `site/versions.env`.
+
+## The validated set
+
+| Layer | Version | Notes |
+|---|---|---|
+| Aerial CUDA-Accelerated RAN | **26.1.0**, container tag `26-1-cubb` | Released 2026-06-15. Source tree tag `26.1.1`. |
+| Aerial Testbed (ATB) | **1.0** (April 2026) | The release that adds DGX Spark support. |
+| Aerial Sample Apps (dApp framework) | **1.0** | E3 interface + PRB-Power reference dApp. |
+| OAI L2/L3 | branch **`ATB1.0_integration`** | From `gitlab.eurecom.fr/oai/openairinterface5g`. Pairs with cuBB 26-1. |
+| GPU driver | **590.48.01** (OpenRM) | CUDA **13.1.1**. |
+| Kernel | **6.17.0-1014-nvidia** | |
+| DOCA / OFED | **3.2.1** / **OFED-internal-25.10-1.7.1** | |
+| linuxptp | **4.2** | Needed for dual-port PTP. |
+| Hugepages | `hugepagesz=1G hugepages=24` | |
+| CPU isolation | `isolcpus=managed_irq,domain,4-19 nohz_full=4-19 rcu_nocbs=4-19` | Cores 0–3 for the OS, 4–19 isolated. |
+| NIC | ConnectX-7, ports named `aerial00`–`aerial03` | Fronthaul port needs MTU 8192. |
+
+**Do not mix rows.** The nvIPC/FAPI contract between the Aerial L1 and the OAI L2
+changes between releases. A mismatched pair does not fail at build time — it
+fails later at nFAPI handshake, which is a much harder thing to debug.
+
+NIC firmware settings required for eCPRI flow steering and accurate TX
+scheduling: `FLEX_PARSER_PROFILE_ENABLE=4`, `PROG_PARSE_GRAPH=1`,
+`REAL_TIME_CLOCK_ENABLE=1`, `ACCURATE_TX_SCHEDULER=1`, `CQE_COMPRESSION=1`.
+
+## The honest answer on Benetel RAN550 + GB10
+
+**There is no NVIDIA-validated pairing of a Benetel RAN550 with a DGX Spark.**
+What actually exists is three separate things:
+
+1. **NVIDIA validates DGX Spark/GB10** with Aerial 26-1 — but its published RU
+   list for the testbed names **WNC 1220 / WNC 3210** and **Foxconn** units.
+   Benetel does not appear in it.
+2. **Benetel validates the RAN550 with Aerial L1 + OAI L2/L3** — but through
+   **OAIBOX**, their own integrated product, not on a DGX Spark.
+3. The RAN550 is a standard **O-RAN 7.2a** indoor RU (n78/n79), and is well
+   documented against other stacks (srsRAN publishes a RAN550 config guide).
+
+So the fronthaul split is standard and there is no reason it cannot work — but
+you are the integrator for this specific combination, not a follower of a
+validated recipe. Concretely, the RU-facing parameters have to be derived
+locally: fronthaul MAC/VLAN, eAxC ID assignment, PRACH/SRS section IDs,
+compression, and the TDD pattern the RU is provisioned for.
+
+This is reinforced by NVIDIA's own gap: **the public 26.1.0 release ships no
+DGX Spark `cuphycontroller` or `l2_adapter` YAML**, so operators derive those
+locally regardless of RU. That is almost certainly why the Aerial tree on an
+already-working box shows those two files as locally modified — start from
+whichever vendor template is closest and edit, which also means **a config
+filename tells you nothing about the RU actually attached**.
+
+## DGX Spark / GB10 specifics
+
+- **No MIG.** GB10 does not support MIG partitioning, so **CUDA MPS is the only
+  way** to share the GPU between the L1 and a dApp. The `mps_sm_*` keys in
+  `cuphycontroller` config are how the SM budget gets split (PUSCH/PDSCH get the
+  large shares). The ISAC paper measures this exact configuration on DGX Spark.
+- **Single cell only** in ATB 1.0 on DGX Spark.
+- **Unified memory**, so `nvidia-smi` reports `Memory-Usage: Not Supported`.
+  That is normal on this platform, not a fault.
+- **GPUDirect RDMA is disputed.** A community DGX Spark automation repo reports
+  it unsupported, which would block the standard cuPHY fronthaul path; NVIDIA
+  nonetheless lists ATB as supported on DGX Spark. Treat as unresolved and
+  verify on the box before assuming either way.
+
+## dApp framework (from the ISAC paper)
+
+The reference architecture places an **E3 Agent** inside the Aerial DU-Low and an
+**E3 Manager** in the dApp container, communicating over **ZeroMQ** with bulk
+data passed through **POSIX shared memory** in pinned host memory. The
+**Aerial Data Lake** captures PHY data via a ping-pong double buffer into
+ClickHouse. The reference **PRB Power** dApp consumes a `[4, 14, 273, 12, 2]`
+FP16 I/Q tensor — one 100 MHz uplink slot at 30 kHz SCS — and the framework adds
+about **150 µs** of overhead with the Triton C API backend.
+
+Note the paper's own measurements are on a **Foxconn CBRS RU at 3.65 GHz**, not
+a Benetel, and it states plainly that DGX Spark cannot do the MIG-isolated
+configuration — only shared-GPU via MPS.
+
+## Sources
+
+- [Aerial CUDA-Accelerated RAN — NGC container](https://catalog.ngc.nvidia.com/orgs/nvidia/aerial/containers/aerial-cuda-accelerated-ran)
+- [Installing Tools on NVIDIA DGX Spark System](https://docs.nvidia.com/aerial/cuda-accelerated-ran/latest/install_guide/installing_tools_spark.html)
+- [Aerial Testbed release notes](https://docs.nvidia.com/aerial/testbed/latest/text/release_notes.html)
+- [Aerial Testbed installation guide](https://docs.nvidia.com/aerial/aerial-ran-colab-ota/current/text/installation_guide/manual_install.html)
+- [Aerial 26-1 / ATB 1.0 / Sample Apps 1.0 announcement](https://github.com/NVIDIA/aerial-framework/discussions/9)
+- [NVIDIA/aerial-sample-apps](https://github.com/NVIDIA/aerial-sample-apps)
+- [OAI Aerial FAPI split tutorial](https://github.com/OPENAIRINTERFACE/openairinterface5g/blob/develop/doc/Aerial_FAPI_Split_Tutorial.md)
+- [Benetel: NVIDIA & OAI integration via OAIBOX](https://benetel.com/nvidia-oai-integration-is-here-via-oaibox/)
+- [Benetel RAN550 product page](https://benetel.com/ran550/) · [datasheet](https://cdn.prod.website-files.com/665f1b4b8eba5127ca955ccd/66f55ffe2c1bda1b594f04a4_RAN550_Datasheet_v1.9.pdf)
+- [srsRAN: Benetel RAN550/RAN650 configuration](https://docs.srsran.com/projects/project/en/latest/tutorials/source/oranRU/source/rus/r550.html)
+- [ai-ran-dgx-spark (community DGX Spark automation)](https://github.com/rcbarke/ai-ran-dgx-spark)
+- Villa, Belgiovine, Hedberg, Polese, Dick, Melodia, *Programmable and GPU-Accelerated Edge Inference for Real-Time ISAC on NVIDIA Aerial Testbed*, [arXiv:2512.06493](https://arxiv.org/abs/2512.06493)
