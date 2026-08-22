@@ -22,7 +22,15 @@ cat > "$HOOK" <<'HOOK_EOF'
 set -uo pipefail
 
 staged() { git diff --cached --no-color -U0 -- . | grep -E '^\+' | grep -v '^+++'; }
-DIFF="$(staged)"
+# Neutralise obvious placeholders before scanning. An all-zero MAC is not a
+# leak -- in Aerial configs `src_mac_addr: 00:00:00:00:00:00` is meaningful and
+# means "use the NIC's own address" -- and example/template files need to show
+# the shape of a value without being a real one.
+DIFF="$(staged | sed -E \
+  -e 's/(00:){5}00/PLACEHOLDER_MAC/g' \
+  -e 's/([0-9a-f]{2}:){5}[0-9a-f]{2}/&/g' \
+  -e 's/de:ad:be:ef:[0-9a-f]{2}:[0-9a-f]{2}/PLACEHOLDER_MAC/gI' \
+  -e 's/0{4}:0{2}:0{2}\.0/PLACEHOLDER_BDF/g')"
 [ -n "$DIFF" ] || exit 0
 
 fail=0
@@ -85,8 +93,9 @@ echo ">> site/ created (untracked)"
 # ever created, so there is nothing to roll back if the hook misbehaves.
 echo ">> self-test:"
 # Assembled at runtime: a literal MAC in this file would make the hook block
-# its own installer.
-printf 'dst_mac_addr: de:ad:be:ef:%02x:%02x\n' 1 2 > "$ROOT/.guardrail-test"
+# its own installer. Deliberately NOT de:ad:be:ef:.. or all-zeros -- both are
+# whitelisted as placeholders, so either would make this test vacuous.
+printf 'dst_mac_addr: %02x:%02x:%02x:%02x:%02x:%02x\n' 18 52 86 120 154 188 > "$ROOT/.guardrail-test"
 git -C "$ROOT" add -f .guardrail-test
 if (cd "$ROOT" && "$HOOK" >/dev/null 2>&1); then
   echo "   FAILED: hook did not block a staged MAC address" >&2

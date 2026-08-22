@@ -1,0 +1,100 @@
+# Site parameters — copy to site/site.yaml and fill in with YOUR values.
+#
+# This is the ONLY thing carried over from a previous deployment: the facts
+# about the radio, the cell and the core. Never the old config files, never the
+# old build, never the old container. Fresh configs are rendered from the
+# pristine upstream templates in stack/ plus the numbers below.
+#
+# site/ is untracked. The values here are placeholders, not a real deployment.
+
+ru:
+  vendor: benetel
+  model: RAN550              # O-RAN 7.2a indoor RU, n78/n79, 4T4R
+  # Destination MAC of the RU on the fronthaul (cuphycontroller dst_mac_addr).
+  mac: "00:00:00:00:00:00"
+  vlan: 0
+  pcp: 0                     # priority code point for eCPRI frames
+  # eAxC (extended antenna-carrier) IDs, per O-RAN 7.2. Must match how the RU
+  # itself is provisioned — get these from the RU's own configuration.
+  eaxc:
+    ssb_pbch: [0, 1, 2, 3]
+    pdcch:    [0, 1, 2, 3]
+    pdsch:    [0, 1, 2, 3]
+    csirs:    [0, 1, 2, 3]
+    pusch:    [0, 1, 2, 3]
+    pucch:    [0, 1, 2, 3]
+    prach:    [4, 5, 6, 7]
+    srs:      [8, 9, 10, 11]
+  # O-RAN fronthaul timing windows, in nanoseconds. THE most RU-specific values
+  # in the whole stack: they define when the RU expects C-plane and U-plane
+  # messages. NVIDIA's per-vendor templates will not carry the right ones for a
+  # different radio, so these come from the RU vendor or from measurement.
+  timing:
+    T1a_max_cp_ul_ns: 0
+    T1a_min_cp_ul_ns: 0
+    T1a_max_cp_dl_ns: 0
+    T1a_min_cp_dl_ns: 0
+    T1a_max_up_ns:    0
+    Ta4_min_ns:       0
+    Ta4_max_ns:       0
+    Tcp_adv_dl_ns:    0
+    ul_u_plane_tx_offset_ns: 0
+
+fronthaul:
+  nic_pcie: "0000:00:00.0"   # PCIe address cuphycontroller binds via DPDK
+  mtu: 8192                  # jumbo frames are mandatory
+
+cell:
+  band: 78
+  prb: 273                   # 273 PRB = 100 MHz at 30 kHz SCS
+  scs: 1                     # 0=15kHz 1=30kHz 2=60kHz 3=120kHz
+  absolute_frequency_ssb: 0
+  absolute_frequency_point_a: 0
+  phys_cell_id: 0
+  nr_cellid: 0
+  pdsch_antenna_ports_xp: 2
+  pdsch_antenna_ports_n1: 2
+  pusch_antenna_ports: 4
+  prach_configuration_index: 0
+  # TDD pattern — must match how the RU is provisioned.
+  tdd:
+    periodicity: 6           # 6 = 5 ms
+    dl_slots: 7
+    dl_symbols: 6
+    ul_slots: 2
+    ul_symbols: 4
+
+plmn:
+  mcc: "001"
+  mnc: "01"
+  mnc_length: 2
+  tac: 1
+  sst: 1
+
+gnb:
+  id: "0xe00"
+  name: "gNB-OAI"
+
+core:
+  # Set deploy: true to run an OAI core in the cluster; false to use an
+  # existing AMF elsewhere on the network.
+  deploy: false
+  amf_ip: "0.0.0.0"          # AMF the gNB registers with (N2/SCTP 38412)
+  gnb_n2_ip: "0.0.0.0"       # this host's address for N2 and N3
+
+# Absolute CPU core ids. Aerial pins threads to these numbers directly, so they
+# must sit inside the kernel's isolcpus range and must not overlap.
+cpu:
+  aerial_workers_ul: [5, 6]
+  aerial_workers_dl: [7, 8, 9]
+  aerial_low_priority: 10
+  aerial_h2d_copy: 11
+  data_core: 12              # E3 agent / Aerial Data Lake
+  l2_timer_thread: 15
+  l2_message_thread: 16
+  oai_gnb: "17-19"
+  oai_poll_core: 19
+
+dapp:
+  enabled: true              # sets data_core + e3_agent_enable in the L1 config
+  variant: python            # python | triton | triton-grpc
