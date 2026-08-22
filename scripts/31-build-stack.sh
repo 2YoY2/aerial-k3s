@@ -25,6 +25,23 @@ WHAT="${1:-all}"
 step() { printf '\n\033[1m>> %s\033[0m\n' "$*"; }
 die()  { printf '\033[31mERROR: %s\033[0m\n' "$*" >&2; exit 1; }
 
+# Build containers get fixed names so an interrupted run can be cleaned up.
+# Ctrl+C only detaches the docker CLI -- the container keeps running, and an
+# anonymous one is then an orphan nobody recognises, still holding cores and
+# the GPU. Reap any stale ones before starting.
+BUILD_CT="aerial-cubb-build"
+PACK_CT="aerial-nvipc-pack"
+reap() {
+  for n in "$BUILD_CT" "$PACK_CT"; do
+    if docker ps -aq -f "name=^${n}$" | grep -q .; then
+      echo ">> removing stale build container: $n"
+      docker rm -f "$n" >/dev/null 2>&1
+    fi
+  done
+}
+reap
+trap 'reap' EXIT INT TERM
+
 [ -d "$AERIAL_SRC" ] || die "missing $AERIAL_SRC — run ./scripts/21-fetch-stack.sh"
 docker image inspect "$AERIAL_IMAGE:$AERIAL_TAG" >/dev/null 2>&1 \
   || die "Aerial image $AERIAL_IMAGE:$AERIAL_TAG not present — run ./scripts/21-fetch-stack.sh"
@@ -80,7 +97,7 @@ build_l1() {
 
   # SYS_NICE silences the chrt warning: the build script tries to set a
   # real-time policy for itself. Harmless when denied, but noisy.
-  docker run --rm --gpus all \
+  docker run --rm --name "$BUILD_CT" --gpus all \
     --cpuset-cpus="$cpus" \
     --cap-add=SYS_NICE \
     -v "$AERIAL_SRC":/opt/nvidia/cuBB \
@@ -119,7 +136,7 @@ build_l2() {
   local GTL="$AERIAL_SRC/cuPHY-CP/gt_common_libs"
   [ -f "$GTL/pack_nvipc.sh" ] || die "pack_nvipc.sh not found in $GTL"
 
-  docker run --rm \
+  docker run --rm --name "$PACK_CT" \
     -v "$AERIAL_SRC":/opt/nvidia/cuBB \
     -w /opt/nvidia/cuBB/cuPHY-CP/gt_common_libs \
     -e cuBB_SDK=/opt/nvidia/cuBB \
