@@ -21,6 +21,12 @@ l1:
   # (or build/... ). A source-only checkout will not start.
   cubbHostPath: /opt/aerial/cuBB
   logHostPath: /var/log/aerial
+  # OAI's cmake_targets/share, mounted at /opt/cuBB/share. The reference
+  # docker-compose mounts this and it is easy to miss: cuPHY reads data from
+  # here, and without it cell configuration can fail in ways that look like
+  # bad PRACH parameters rather than a missing mount. Set to the OAI source
+  # tree's cmake_targets/share; empty to skip.
+  sharePath: ""
   # Required: Kubernetes rejects a hugepages request that has no cpu or memory
   # beside it. A request, not a limit -- see the note in the template.
   memoryRequest: 8Gi

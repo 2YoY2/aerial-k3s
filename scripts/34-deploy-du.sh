@@ -66,10 +66,22 @@ else
   GNB_ARG=()
 fi
 
+# The reference compose mounts OAI's cmake_targets/share into the L1 at
+# /opt/cuBB/share. Omitting it is not obviously fatal -- it surfaces later as
+# a cell-configuration failure -- so pass it whenever the directory exists.
+SHARE="$STACK/openairinterface5g/cmake_targets/share"
+if [ -d "$SHARE" ]; then
+  echo "   cuBB share: $SHARE"
+else
+  echo "   WARNING: $SHARE missing; /opt/cuBB/share will be empty in the L1"
+  SHARE=""
+fi
+
 step "Deploying $REL to namespace $NS"
 helm upgrade --install "$REL" "$ROOT/charts/aerial-du" -n "$NS" \
   --set l1.cubbHostPath="$AERIAL_SRC" \
   --set l1.configProfile=site \
+  --set l1.sharePath="$SHARE" \
   --set l1.image.repository="$AERIAL_IMAGE" \
   --set l1.image.tag="$AERIAL_TAG" \
   "${GNB_ARG[@]}" \

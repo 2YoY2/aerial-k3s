@@ -57,6 +57,10 @@ spec:
           hostPath: { path: /usr/src, type: Directory }
         - name: aerial-log
           hostPath: { path: {{ .Values.l1.logHostPath | quote }}, type: DirectoryOrCreate }
+        {{- if .Values.l1.sharePath }}
+        - name: cubb-share
+          hostPath: { path: {{ .Values.l1.sharePath | quote }}, type: Directory }
+        {{- end }}
         {{- if .Values.hugepages.enabled }}
         - name: hugepage
           emptyDir: { medium: HugePages }
@@ -104,6 +108,9 @@ spec:
             - { name: modules,    mountPath: /lib/modules }
             - { name: usrsrc,     mountPath: /usr/src }
             - { name: aerial-log, mountPath: {{ .Values.l1.logHostPath | quote }} }
+            {{- if .Values.l1.sharePath }}
+            - { name: cubb-share, mountPath: /opt/cuBB/share }
+            {{- end }}
             - { name: dshm,       mountPath: /dev/shm }
             {{- if .Values.hugepages.enabled }}
             - { name: hugepage,   mountPath: /dev/hugepages }
