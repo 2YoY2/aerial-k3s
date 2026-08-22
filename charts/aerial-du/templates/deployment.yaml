@@ -136,12 +136,22 @@ spec:
             # nothing competes with Aerial's own affinity. Core isolation is
             # already done at boot via isolcpus.
           # The L1 prints this once the fronthaul is up and cuPHY is running.
+          #
+          # Check BOTH paths: nvlog_config.yaml decides where phy.log goes, and
+          # a site that points it at AERIAL_LOG_PATH leaves /tmp/phy.log empty
+          # forever -- so probing only /tmp reports a healthy L1 as never-ready.
+          #
+          # failureThreshold is generous because init is genuinely slow here:
+          # the HARQ pools alone (256 x 4 MB) can take minutes to allocate.
           readinessProbe:
             exec:
-              command: ["bash", "-c", "grep -q 'L1 is ready!' /tmp/phy.log"]
-            initialDelaySeconds: 30
-            periodSeconds: 20
-            failureThreshold: 15
+              command:
+                - bash
+                - -c
+                - "grep -qs 'L1 is ready!' /tmp/phy.log {{ .Values.l1.logHostPath }}/phy.log"
+            initialDelaySeconds: 60
+            periodSeconds: 30
+            failureThreshold: 40
 
         # ------------------------------------------------------------ L2/L3
         - name: oai-gnb
