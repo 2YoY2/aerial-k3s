@@ -139,14 +139,19 @@ build_l2() {
   echo "   packed and staged: $(basename "$tb")"
 
   step "L2: building the OAI gNB image with the Aerial FAPI split"
-  local df
-  df="$(ls "$OAI_SRC"/docker/Dockerfile.*aerial* 2>/dev/null | head -1)"
-  if [ -z "$df" ]; then
+  # Match on BASENAMES, never on full paths: this repo lives under a directory
+  # called aerial-k3s, so filtering `ls` output by "aerial" silently discards
+  # every candidate. Work inside docker/ so only filenames are ever compared.
+  local dfn
+  dfn="$(cd "$OAI_SRC/docker" 2>/dev/null && ls -1 Dockerfile.*aerial* 2>/dev/null \
+         | grep -v sanitize | head -1)"          # sanitizer variants are for debugging
+  if [ -z "$dfn" ]; then
     echo "   No Aerial Dockerfile found. Available:"
     ls -1 "$OAI_SRC"/docker/ 2>/dev/null | sed 's/^/     /'
     die "cannot build L2 without an Aerial gNB Dockerfile"
   fi
-  echo "   dockerfile: $(basename "$df")"
+  local df="$OAI_SRC/docker/$dfn"
+  echo "   dockerfile: $dfn"
 
   # OAI builds in stages: base -> build -> target.
   #
@@ -161,12 +166,16 @@ build_l2() {
   # The gNB Dockerfile starts FROM ran-base:latest, so that image must exist
   # first. Its Dockerfile has been named several ways across OAI releases, so
   # match loosely rather than pinning one spelling.
-  local sdf
-  sdf="$(ls "$OAI_SRC"/docker/Dockerfile.base* 2>/dev/null | grep -vi aerial | head -1)"
-  if [ -z "$sdf" ]; then
-    echo "   No base Dockerfile found. This release ships:"
-    ls -1 "$OAI_SRC"/docker/ 2>/dev/null | sed 's/^/     /'
-    die "cannot build ran-base:latest — tell me which of the above builds the base image"
+  # The base MUST match the gNB Dockerfile's OS family. OAI ships base images
+  # for ubuntu, rocky and rhel9; an alphabetical pick lands on rhel9 and would
+  # put a RHEL userland underneath an Ubuntu gNB image. Derive it instead:
+  #   Dockerfile.gNB.aerial.ubuntu  ->  Dockerfile.base.ubuntu
+  local osfam="${dfn##*.}"
+  local sdf="$OAI_SRC/docker/Dockerfile.base.$osfam"
+  if [ ! -f "$sdf" ]; then
+    echo "   No Dockerfile.base.$osfam to match $dfn. This release ships:"
+    ls -1 "$OAI_SRC"/docker/ | grep -i base | sed 's/^/     /'
+    die "cannot build a ran-base matching the gNB image's OS family"
   fi
   if [ "${REUSE_BASE:-0}" = 1 ] && docker image inspect ran-base:latest >/dev/null 2>&1; then
     echo "   ran-base:latest present and REUSE_BASE=1 — reusing an inherited image"
