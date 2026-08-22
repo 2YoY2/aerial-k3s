@@ -29,6 +29,19 @@ die()  { printf '\033[31mERROR: %s\033[0m\n' "$*" >&2; exit 1; }
 docker image inspect "$AERIAL_IMAGE:$AERIAL_TAG" >/dev/null 2>&1 \
   || die "Aerial image $AERIAL_IMAGE:$AERIAL_TAG not present — run ./scripts/21-fetch-stack.sh"
 
+# Provenance of the one artefact we do not build ourselves. A registry digest
+# means the image came from NGC and matches what NGC published; a local build or
+# a `docker commit` has no digest. If this prints none, re-pull before trusting
+# it -- `docker pull` is a no-op when the local copy already matches.
+DIGEST="$(docker image inspect -f '{{range .RepoDigests}}{{.}}{{end}}' "$AERIAL_IMAGE:$AERIAL_TAG" 2>/dev/null)"
+if [ -n "$DIGEST" ]; then
+  echo ">> Aerial image provenance: $DIGEST"
+else
+  echo ">> WARNING: Aerial image has NO registry digest — it was not pulled from"
+  echo "   NGC, so its contents are unverified. Re-pull it:"
+  echo "     docker login nvcr.io && docker pull $AERIAL_IMAGE:$AERIAL_TAG"
+fi
+
 # ------------------------------------------------------------------ L1
 build_l1() {
   step "L1: compiling cuBB inside $AERIAL_TAG (target: build.$ARCH)"
@@ -103,17 +116,22 @@ build_l2() {
   fi
   echo "   dockerfile: $(basename "$df")"
 
-  # OAI builds in stages: base -> build -> target. Build whichever prerequisite
-  # stages this release defines and that are not already present.
+  # OAI builds in stages: base -> build -> target.
+  #
+  # These are rebuilt every time on purpose. An existing ran-base/ran-build on
+  # a reused host was produced by whoever set the box up before, from sources
+  # and flags nobody can now inspect -- and it would silently become a layer
+  # underneath the image we ship. "Fresh" has to mean the whole chain, not just
+  # the top of it. Set REUSE_BASE=1 to trade that guarantee for build time.
   for stage in base build; do
     local sdf img="ran-$stage:latest"
     sdf="$(ls "$OAI_SRC"/docker/Dockerfile.$stage.* 2>/dev/null | grep -v aerial | head -1)"
     [ -n "$sdf" ] || continue
-    if docker image inspect "$img" >/dev/null 2>&1; then
-      echo "   $img present, skipping"
+    if [ "${REUSE_BASE:-0}" = 1 ] && docker image inspect "$img" >/dev/null 2>&1; then
+      echo "   $img present and REUSE_BASE=1 — reusing an inherited image"
     else
       echo "   building $img from $(basename "$sdf")"
-      docker build -t "$img" -f "$sdf" "$OAI_SRC" || die "$img build failed"
+      docker build --pull -t "$img" -f "$sdf" "$OAI_SRC" || die "$img build failed"
     fi
   done
 
