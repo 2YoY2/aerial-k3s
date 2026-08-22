@@ -122,3 +122,33 @@ pods; a dedicated RAN node with one GPU and one DU has nothing to ration.
 The chart therefore defaults to `l1.requestGpu: false` and passes the GPU
 through the runtime. Set it to `true` only on a discrete-GPU host where several
 workloads compete and the plugin can actually start.
+
+## CPU pinning: why Aerial fights the Kubernetes CPU manager
+
+Aerial pins its threads to **absolute core ids** read from `cuphycontroller`'s
+YAML (`workers_ul`, `workers_dl`, `dpdk_thread`, `low_priority_core`,
+`data_core`). If a core is outside the container's cpuset, `sched_setaffinity`
+returns `EINVAL` and the L1 aborts with:
+
+```
+[FH.LIB] Exception! Error setting CPU affinity mask: Invalid argument
+```
+
+This looks like a fronthaul fault. It is a cgroup fault.
+
+The Kubernetes CPU manager cannot solve it. Its static policy grants *exclusive*
+cores to Guaranteed pods, but **the kubelet chooses which cores** — it has no
+way to honour "core 5 and 6 specifically". An app that hardcodes core ids and a
+scheduler that assigns them arbitrarily cannot agree.
+
+So the DU pod is deliberately **Burstable** (memory request, no cpu request):
+
+- no cpu request → the CPU manager ignores the pod and never rewrites its cpuset
+- the pod's cpuset must simply *include* the cores the YAML names
+- isolation still comes from `isolcpus` at boot, not from Kubernetes
+
+The corollary is that `kubepods.slice` must be allowed those cores. A host that
+previously ran the L1 outside Kubernetes may fence kubepods away from them — see
+`32-install-k3s.sh`, which detects and widens that. Excluding them is redundant
+anyway: `isolcpus` already stops the scheduler placing ordinary threads there,
+so only a deliberate `sched_setaffinity` ever lands on an isolated core.
