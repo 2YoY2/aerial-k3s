@@ -1,0 +1,155 @@
+{{- $name := default .Chart.Name .Values.nameOverride -}}
+# ONE POD, TWO CONTAINERS — this is the whole point of the chart.
+#
+# Aerial's L1 and OAI's L2 exchange FAPI over nvIPC, which is POSIX shared
+# memory, so they must share an IPC namespace. The reference docker-compose
+# does that with `ipc: "container:nv-cubb"` on the L2 side. Containers in a
+# Kubernetes Pod already share one IPC namespace, so co-locating them in a
+# single Pod reproduces it exactly.
+#
+# Do NOT split these into two Deployments, and do NOT reach for hostIPC: true.
+# A previous migration attempt here switched the L1 to `ipc: host` plus a
+# /dev/shm bind mount and that is the version recorded as broken.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $name }}
+  labels:
+    app.kubernetes.io/name: {{ $name }}
+    app.kubernetes.io/component: du
+spec:
+  # A DU is a cell, not a stateless worker: it owns one GPU, one fronthaul port
+  # and one cell identity. Never raise this. Add cells by installing another
+  # release of this chart, one per cell site.
+  replicas: 1
+  strategy:
+    type: Recreate          # two L1s must never hold the fronthaul NIC at once
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: {{ $name }}
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: {{ $name }}
+    spec:
+      {{- if .Values.hostNetwork }}
+      hostNetwork: true
+      dnsPolicy: ClusterFirstWithHostNet
+      {{- end }}
+      terminationGracePeriodSeconds: 30
+      {{- with .Values.nodeSelector }}
+      nodeSelector: {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations: {{- toYaml . | nindent 8 }}
+      {{- end }}
+      volumes:
+        # nvIPC shared memory. Memory-backed so it is real RAM, not disk.
+        - name: dshm
+          emptyDir:
+            medium: Memory
+            sizeLimit: {{ .Values.shmSize }}
+        - name: cubb
+          hostPath: { path: {{ .Values.l1.cubbHostPath | quote }}, type: Directory }
+        - name: modules
+          hostPath: { path: /lib/modules, type: Directory }
+        - name: usrsrc
+          hostPath: { path: /usr/src, type: Directory }
+        - name: aerial-log
+          hostPath: { path: {{ .Values.l1.logHostPath | quote }}, type: DirectoryOrCreate }
+        {{- if .Values.hugepages.enabled }}
+        - name: hugepage
+          emptyDir: { medium: HugePages }
+        {{- end }}
+        {{- if .Values.l2.configMap }}
+        - name: gnb-conf
+          configMap: { name: {{ .Values.l2.configMap }} }
+        {{- else if .Values.l2.configHostPath }}
+        - name: gnb-conf
+          hostPath: { path: {{ .Values.l2.configHostPath | quote }}, type: File }
+        {{- end }}
+
+      containers:
+        # ------------------------------------------------------------ L1
+        - name: nv-cubb
+          image: "{{ .Values.l1.image.repository }}:{{ .Values.l1.image.tag }}"
+          imagePullPolicy: {{ .Values.l1.image.pullPolicy }}
+          # run_l1.sh starts CUDA MPS itself (GB10 has no MIG, so MPS is the
+          # only way the L1 and a dApp can share the GPU) and binds the
+          # fronthaul NIC through DPDK. Both need full privilege.
+          securityContext:
+            privileged: true
+          command: ["bash", "-c"]
+          args:
+            - "rm -f /tmp/phy.log && /opt/nvidia/cuBB/run_l1.sh {{ .Values.l1.configProfile }}"
+          env:
+            - name: cuBB_SDK
+              value: /opt/nvidia/cuBB
+            - name: AERIAL_LOG_PATH
+              value: {{ .Values.l1.logHostPath | quote }}
+            - name: CUDA_MPS_PIPE_DIRECTORY
+              value: /tmp/nvidia-mps
+            - name: CUDA_MPS_LOG_DIRECTORY
+              value: /var/log/nvidia-mps
+            - name: CUDA_DEVICE_MAX_CONNECTIONS
+              value: "8"
+          volumeMounts:
+            - { name: cubb,       mountPath: /opt/nvidia/cuBB }
+            - { name: modules,    mountPath: /lib/modules }
+            - { name: usrsrc,     mountPath: /usr/src }
+            - { name: aerial-log, mountPath: {{ .Values.l1.logHostPath | quote }} }
+            - { name: dshm,       mountPath: /dev/shm }
+            {{- if .Values.hugepages.enabled }}
+            - { name: hugepage,   mountPath: /dev/hugepages }
+            {{- end }}
+          resources:
+            limits:
+              nvidia.com/gpu: 1
+              {{- if .Values.hugepages.enabled }}
+              hugepages-{{ .Values.hugepages.size }}: {{ .Values.hugepages.amount }}
+              {{- end }}
+            # NOTE: deliberately no cpu limit. cuphycontroller pins its threads
+            # to ABSOLUTE core ids from its YAML (workers_ul, workers_dl,
+            # dpdk_thread, low_priority_core, data_core). Kubernetes' static CPU
+            # manager hands out whichever exclusive cores it likes, which would
+            # not be those ids -- so a cpu limit here fights the config instead
+            # of helping. Isolation is already done at boot with isolcpus.
+          # The L1 prints this once the fronthaul is up and cuPHY is running.
+          readinessProbe:
+            exec:
+              command: ["bash", "-c", "grep -q 'L1 is ready!' /tmp/phy.log"]
+            initialDelaySeconds: 30
+            periodSeconds: 20
+            failureThreshold: 15
+
+        # ------------------------------------------------------------ L2/L3
+        - name: oai-gnb
+          image: "{{ .Values.l2.image.repository }}:{{ .Values.l2.image.tag }}"
+          imagePullPolicy: {{ .Values.l2.image.pullPolicy }}
+          securityContext:
+            capabilities:
+              drop: ["ALL"]
+              add:
+                - SYS_NICE   # real-time thread priorities
+                - IPC_LOCK   # lock the nvIPC shared memory
+          env:
+            - name: USE_ADDITIONAL_OPTIONS
+              value: {{ .Values.l2.additionalOptions | quote }}
+          volumeMounts:
+            - { name: dshm, mountPath: /dev/shm }
+            {{- if or .Values.l2.configMap .Values.l2.configHostPath }}
+            - name: gnb-conf
+              mountPath: /opt/oai-gnb/etc/gnb.conf
+              {{- if .Values.l2.configMap }}
+              subPath: gnb.conf
+              {{- end }}
+            {{- end }}
+          resources:
+            limits:
+              nvidia.com/gpu: 1
+          livenessProbe:
+            exec:
+              command: ["bash", "-c", "pgrep -f softmodem >/dev/null"]
+            initialDelaySeconds: 60
+            periodSeconds: 15
+            failureThreshold: 4

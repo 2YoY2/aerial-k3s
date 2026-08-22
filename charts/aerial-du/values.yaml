@@ -1,0 +1,51 @@
+# One DU = one cell site = one Helm release. See templates/deployment.yaml for
+# why this is a single Pod and why there are no CPU limits.
+#
+# Site-specific values (RU MAC, VLAN, cell identity) do NOT belong here --
+# they live in the cuphycontroller YAML inside the cuBB tree and in the gNB
+# config. Point this chart at them; do not copy them into a tracked file.
+
+nameOverride: ""
+
+l1:
+  image:
+    repository: nvcr.io/nvidia/aerial/aerial-cuda-accelerated-ran
+    tag: 26-1-cubb
+    pullPolicy: IfNotPresent
+  # Argument to run_l1.sh; selects cuphycontroller_<profile>.yaml.
+  # run_l1.sh also auto-detects this from DMI, but be explicit.
+  configProfile: P5G_WNC_DGX
+  # Host path of the BUILT cuBB tree, mounted at /opt/nvidia/cuBB.
+  # It must contain the compiled binary that run_l1.sh looks for:
+  #   build.$(uname -m)/cuPHY-CP/cuphycontroller/examples/cuphycontroller_scf
+  # (or build/... ). A source-only checkout will not start.
+  cubbHostPath: /opt/aerial/cuBB
+  logHostPath: /var/log/aerial
+
+l2:
+  image:
+    repository: oai-gnb-aerial
+    tag: latest
+    pullPolicy: IfNotPresent
+  additionalOptions: "--log_config.global_log_options level,nocolor,utc_time"
+  # gNB config file: provide via ConfigMap generated from site/, or set
+  # hostPath to mount it directly from disk.
+  configHostPath: ""          # e.g. /opt/aerial/gnb.conf
+  configMap: ""               # name of a ConfigMap with key gnb.conf
+
+# The fronthaul, N2 and N3 all ride host interfaces, and cuphycontroller binds
+# the NIC by PCIe address through DPDK. Host networking is not optional here.
+hostNetwork: true
+
+# Matches shm_size: 4096m in the reference compose. This is where nvIPC puts
+# the FAPI ring buffers shared between L1 and L2.
+shmSize: 4Gi
+
+hugepages:
+  enabled: true
+  size: 1Gi
+  amount: 8Gi
+
+# Pin the DU to the node that has the GPU and the fronthaul cable.
+nodeSelector: {}
+tolerations: []

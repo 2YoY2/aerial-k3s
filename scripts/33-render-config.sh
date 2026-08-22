@@ -93,7 +93,19 @@ if [ "$(s .dapp.enabled)" = "true" ]; then
 fi
 
 # ---------------------------------------------------------------- L2 config
-GT="$(ls "$STACK/openairinterface5g/targets/PROJECTS/GENERIC-NR-5GC/CONF/"*band78*aerial*.conf 2>/dev/null | head -1)"
+# Pick the template matching this cell's bandwidth. OAI ships 106prb and
+# 273prb variants and the first alphabetically is 106 -- but the templates
+# differ in more than dl_carrierBandwidth: initialDLBWPlocationAndBandwidth
+# encodes RBstart and length for that PRB count and is NOT templated here, so
+# starting from the wrong one yields a subtly wrong initial bandwidth part.
+CONFD="$STACK/openairinterface5g/targets/PROJECTS/GENERIC-NR-5GC/CONF"
+PRB="$(s .cell.prb)"
+GT="$(ls "$CONFD"/*band$(s .cell.band).${PRB}prb*aerial*.conf 2>/dev/null | grep -v ul-heavy | head -1)"
+if [ -z "$GT" ]; then
+  GT="$(ls "$CONFD"/*band*aerial*.conf 2>/dev/null | grep -v ul-heavy | head -1)"
+  [ -n "$GT" ] && echo ">> WARNING: no ${PRB}prb template; falling back to $(basename "$GT")." \
+               && echo "   Check initialDLBWPlocationAndBandwidth by hand — it is PRB-specific."
+fi
 L2="$OUT/gnb.conf"
 if [ -n "$GT" ]; then
   cp "$GT" "$L2"
