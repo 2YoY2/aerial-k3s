@@ -158,9 +158,16 @@ build_l2() {
   # Only ran-base. The gNB Dockerfile is multi-stage and defines its own
   # `ran-build` stage FROM ran-base, so building a separate ran-build image
   # would be dead work that nothing consumes.
+  # The gNB Dockerfile starts FROM ran-base:latest, so that image must exist
+  # first. Its Dockerfile has been named several ways across OAI releases, so
+  # match loosely rather than pinning one spelling.
   local sdf
-  sdf="$(ls "$OAI_SRC"/docker/Dockerfile.base.* 2>/dev/null | grep -v aerial | head -1)"
-  [ -n "$sdf" ] || die "no Dockerfile.base.* in $OAI_SRC/docker"
+  sdf="$(ls "$OAI_SRC"/docker/Dockerfile.base* 2>/dev/null | grep -vi aerial | head -1)"
+  if [ -z "$sdf" ]; then
+    echo "   No base Dockerfile found. This release ships:"
+    ls -1 "$OAI_SRC"/docker/ 2>/dev/null | sed 's/^/     /'
+    die "cannot build ran-base:latest — tell me which of the above builds the base image"
+  fi
   if [ "${REUSE_BASE:-0}" = 1 ] && docker image inspect ran-base:latest >/dev/null 2>&1; then
     echo "   ran-base:latest present and REUSE_BASE=1 — reusing an inherited image"
   else
