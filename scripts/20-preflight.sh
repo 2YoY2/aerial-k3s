@@ -68,7 +68,17 @@ for k in isolcpus nohz_full rcu_nocbs; do
   v="$(printf '%s\n' "$CMD" | grep -oE "${k}=[^ ]+" || true)"
   if [ -n "$v" ]; then ok "$v"; else bad "$k missing from kernel cmdline (expected $k=...$REQ_ISOLCPUS)"; fi
 done
-NPROC="$(nproc)"; ok "cores: $NPROC"
+# nproc honours the caller's CPU affinity, and isolcpus removes the isolated
+# cores from the default scheduler domain -- so on a correctly isolated host a
+# plain `nproc` reports only the housekeeping cores. Report both, or "cores: 4"
+# on a 20-core box reads like a fault when it is proof the isolation works.
+NPROC_ALL="$(nproc --all 2>/dev/null || getconf _NPROCESSORS_ONLN 2>/dev/null)"
+NPROC_AVAIL="$(nproc)"
+if [ "${NPROC_AVAIL:-0}" -lt "${NPROC_ALL:-0}" ] 2>/dev/null; then
+  ok "cores: $NPROC_ALL total, $NPROC_AVAIL unisolated (isolation is active)"
+else
+  ok "cores: $NPROC_ALL total (no CPU isolation in effect)"
+fi
 
 sec "Fronthaul NIC"
 FH=""
