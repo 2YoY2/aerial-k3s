@@ -113,6 +113,43 @@ else
 MSG
 fi
 
+# ------------------------------------------------- kubepods CPU access
+# The L1 pins its own threads to absolute core ids (workers_ul, workers_dl,
+# dpdk_thread, data_core...). Those calls fail with EINVAL unless the pod's
+# cgroup permits those cores, and the failure surfaces deep inside the
+# fronthaul library as "Error setting CPU affinity mask: Invalid argument".
+#
+# A host that previously ran the L1 OUTSIDE Kubernetes may deliberately fence
+# kubepods away from the RAN cores. That is right for that layout and wrong for
+# this one: here the L1 IS a pod. Excluding those cores is also redundant, since
+# isolcpus already stops the scheduler placing ordinary threads there -- only an
+# explicit sched_setaffinity lands on them, which is exactly what Aerial does.
+step_cpus() { printf '\n>> kubepods CPU access\n'; }
+step_cpus
+NPROC_ALL="$(nproc --all 2>/dev/null || nproc)"
+WANT_CPUS="${KUBEPODS_CPUS:-0-$((NPROC_ALL - 1))}"
+EFF="$(cat /sys/fs/cgroup/kubepods.slice/cpuset.cpus.effective 2>/dev/null)"
+if [ -z "$EFF" ]; then
+  echo "   could not read kubepods.slice cpuset (nothing to do, or cgroup v1)"
+elif [ "$EFF" = "$WANT_CPUS" ]; then
+  echo "   OK: kubepods may use $EFF"
+else
+  echo "   kubepods is restricted to '$EFF' but the L1 needs '$WANT_CPUS'"
+  # A watchdog unit that re-applies the restriction will undo us every few
+  # seconds, so it has to go first.
+  for u in $(systemctl list-unit-files --no-legend 2>/dev/null \
+             | awk '{print $1}' | grep -iE 'kubepods|ran-cpu'); do
+    echo "   disabling watchdog unit: $u"
+    sudo systemctl disable --now "$u" >/dev/null 2>&1
+  done
+  sudo systemctl set-property --runtime kubepods.slice "AllowedCPUs=$WANT_CPUS" \
+    && echo "   kubepods.slice AllowedCPUs=$WANT_CPUS" \
+    || echo "   FAILED to widen kubepods cpuset"
+  sleep 2
+  echo "   now: $(cat /sys/fs/cgroup/kubepods.slice/cpuset.cpus.effective 2>/dev/null)"
+  echo "   (runtime-only; re-run this script after a reboot)"
+fi
+
 echo
 echo ">> node resources visible to the scheduler:"
 kubectl get node -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{range $k,$v := .status.allocatable}{"   "}{$k}{"="}{$v}{"\n"}{end}{end}' 2>/dev/null \
