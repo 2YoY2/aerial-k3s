@@ -24,6 +24,18 @@ l1:
   # Required: Kubernetes rejects a hugepages request that has no cpu or memory
   # beside it. A request, not a limit -- see the note in the template.
   memoryRequest: 8Gi
+  # Ask the scheduler for nvidia.com/gpu, which requires the NVIDIA device
+  # plugin to be advertising it.
+  #
+  # Off by default because the plugin CANNOT run on a unified-memory part such
+  # as GB10: it builds its device map by querying per-device memory, and NVML
+  # answers "Not Supported" there, so the DaemonSet crash-loops and the node
+  # never advertises a GPU. It is also unnecessary here -- with nvidia as
+  # Docker's default runtime the GPU is injected into the container anyway, and
+  # a plugin exists to ration GPUs between competing pods, which a single-GPU
+  # node running one DU does not need. Turn on for a discrete-GPU host where
+  # several workloads compete.
+  requestGpu: false
 
 l2:
   image:

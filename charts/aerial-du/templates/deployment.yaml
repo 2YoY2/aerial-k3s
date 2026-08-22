@@ -93,6 +93,12 @@ spec:
               value: /var/log/nvidia-mps
             - name: CUDA_DEVICE_MAX_CONNECTIONS
               value: "8"
+            # How the L1 gets the GPU when there is no device plugin: Docker's
+            # default runtime is nvidia, and these tell it what to inject.
+            - name: NVIDIA_VISIBLE_DEVICES
+              value: "all"
+            - name: NVIDIA_DRIVER_CAPABILITIES
+              value: "all"
           volumeMounts:
             - { name: cubb,       mountPath: /opt/nvidia/cuBB }
             - { name: modules,    mountPath: /lib/modules }
@@ -104,7 +110,9 @@ spec:
             {{- end }}
           resources:
             limits:
+              {{- if .Values.l1.requestGpu }}
               nvidia.com/gpu: 1
+              {{- end }}
               {{- if .Values.hugepages.enabled }}
               hugepages-{{ .Values.hugepages.size }}: {{ .Values.hugepages.amount }}
               {{- end }}

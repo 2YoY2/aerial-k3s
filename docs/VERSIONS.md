@@ -95,3 +95,30 @@ configuration — only shared-GPU via MPS.
 - [srsRAN: Benetel RAN550/RAN650 configuration](https://docs.srsran.com/projects/project/en/latest/tutorials/source/oranRU/source/rus/r550.html)
 - [ai-ran-dgx-spark (community DGX Spark automation)](https://github.com/rcbarke/ai-ran-dgx-spark)
 - Villa, Belgiovine, Hedberg, Polese, Dick, Melodia, *Programmable and GPU-Accelerated Edge Inference for Real-Time ISAC on NVIDIA Aerial Testbed*, [arXiv:2512.06493](https://arxiv.org/abs/2512.06493)
+
+## GB10 and the NVIDIA Kubernetes device plugin
+
+**The device plugin cannot run on GB10.** It builds its device map by querying
+per-device memory, and on a unified-memory part NVML answers `Not Supported`,
+so the DaemonSet crash-loops:
+
+```
+error building device map: error visiting device: error building Device:
+error getting device memory: Not Supported
+```
+
+`nvidia-smi` reports the same thing as `Memory-Usage: Not Supported`. That is
+the platform being unified-memory, not a fault.
+
+Consequence: the node never advertises `nvidia.com/gpu`, so any Pod requesting
+one stays `Pending` forever with `Insufficient nvidia.com/gpu`.
+
+**The fix is not to need it.** Configure nvidia as Docker's default runtime
+(`nvidia-ctk runtime configure --runtime=docker --set-as-default`) and the GPU
+is injected into every container, with `NVIDIA_VISIBLE_DEVICES` selecting what
+the container sees. A device plugin exists to *ration* GPUs between competing
+pods; a dedicated RAN node with one GPU and one DU has nothing to ration.
+
+The chart therefore defaults to `l1.requestGpu: false` and passes the GPU
+through the runtime. Set it to `true` only on a discrete-GPU host where several
+workloads compete and the plugin can actually start.

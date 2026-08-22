@@ -72,9 +72,30 @@ echo ">> GPU scheduling"
 # We do NOT change /etc/docker/daemon.json here: this host runs other people's
 # containers, and switching the default runtime under them is not ours to do.
 if docker info 2>/dev/null | grep -qi 'Default Runtime: nvidia'; then
-  echo "   OK: docker default runtime is nvidia"
-  kubectl get ds -n kube-system nvidia-device-plugin-daemonset >/dev/null 2>&1 \
-    || kubectl apply -f https://raw.githubusercontent.com/NVIDIA/k8s-device-plugin/v0.17.1/deployments/static/nvidia-device-plugin.yml
+  echo "   OK: docker default runtime is nvidia — containers get the GPU directly"
+  # The device plugin is OPT-IN, and off by default on purpose.
+  #
+  # It cannot run on a unified-memory GPU such as GB10: it builds its device
+  # map by querying per-device memory and NVML answers "Not Supported", so the
+  # DaemonSet crash-loops and the node never advertises nvidia.com/gpu at all.
+  # (nvidia-smi shows the same thing as "Memory-Usage: Not Supported".)
+  #
+  # It is also not needed on a dedicated RAN node: a device plugin rations GPUs
+  # between competing pods, and with nvidia as the default runtime the GPU is
+  # injected into every container regardless.
+  if [ "${INSTALL_DEVICE_PLUGIN:-0}" = 1 ]; then
+    kubectl get ds -n kube-system nvidia-device-plugin-daemonset >/dev/null 2>&1 \
+      || kubectl apply -f https://raw.githubusercontent.com/NVIDIA/k8s-device-plugin/v0.17.1/deployments/static/nvidia-device-plugin.yml
+  else
+    echo "   device plugin not installed (INSTALL_DEVICE_PLUGIN=1 to force)."
+    echo "   Pods reach the GPU through the runtime; the chart does not request"
+    echo "   nvidia.com/gpu unless you set l1.requestGpu=true."
+    if kubectl get ds -n kube-system nvidia-device-plugin-daemonset >/dev/null 2>&1; then
+      echo "   NOTE: a device-plugin DaemonSet is already present. On GB10 it will"
+      echo "   crash-loop. Remove it with:"
+      echo "     kubectl delete ds -n kube-system nvidia-device-plugin-daemonset"
+    fi
+  fi
 else
   cat <<'MSG'
    Docker's default runtime is NOT nvidia, so pods cannot get the GPU and
