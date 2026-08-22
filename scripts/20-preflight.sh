@@ -98,6 +98,29 @@ for i in $(ls /sys/class/net 2>/dev/null | grep -v lo); do
 done
 [ -n "$FH" ] || bad "no mlx5 port that is up with MTU >= $REQ_FH_MTU (fronthaul needs jumbo frames)"
 
+# NIC FIRMWARE, not driver settings. Without the flex parser the NIC cannot
+# classify eCPRI, and the L1 logs "eCPRI parser not supported ... retrying
+# without eCPRI" -- it keeps running, so this fails as degraded fronthaul
+# rather than as an error. These live in firmware and need mlxfwreset or a
+# power cycle to take effect.
+if command -v mlxconfig >/dev/null 2>&1; then
+  BDF="$(ethtool -i "${FH:-none}" 2>/dev/null | awk '/bus-info:/{print $2}')"
+  if [ -n "$BDF" ]; then
+    MC="$(sudo mlxconfig -d "$BDF" q 2>/dev/null)"
+    for kv in FLEX_PARSER_PROFILE_ENABLE:4 PROG_PARSE_GRAPH:True \
+              REAL_TIME_CLOCK_ENABLE:True ACCURATE_TX_SCHEDULER:True CQE_COMPRESSION:AGGRESSIVE; do
+      k="${kv%%:*}"; want="${kv##*:}"
+      got="$(printf '%s\n' "$MC" | awk -v k="$k" '$1==k{print $2}')"
+      if [ -z "$got" ]; then info "$k: not reported"
+      elif printf '%s' "$got" | grep -qi "$want"; then ok "$k = $got"
+      else bad "$k = $got (expected $want) — eCPRI/flow steering will not work"
+      fi
+    done
+  fi
+else
+  info "mlxconfig not installed — cannot verify NIC firmware (flex parser, eCPRI)"
+fi
+
 sec "PTP (fronthaul is time-synchronous; without lock the RU will not accept U-plane)"
 if pgrep -af '[p]tp4l' >/dev/null 2>&1; then
   ok "ptp4l running"
