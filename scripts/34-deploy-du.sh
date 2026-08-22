@@ -76,7 +76,26 @@ helm upgrade --install "$REL" "$ROOT/charts/aerial-du" -n "$NS" \
   || die "helm install failed"
 
 step "Status"
-kubectl get pods -n "$NS" -o wide
+# Give the controllers a moment: querying pods immediately after helm returns
+# races the ReplicaSet controller and reports "no resources found" for a
+# Deployment that is about to come up perfectly well.
+for i in $(seq 1 15); do
+  [ "$(kubectl get pods -n "$NS" --no-headers 2>/dev/null | wc -l)" -gt 0 ] && break
+  sleep 2
+done
+kubectl get deploy,rs,pods -n "$NS" -o wide 2>&1
+
+# No pod after that means the ReplicaSet could not create one -- a pod-level
+# rejection the Deployment's own validation did not catch. The reason lives in
+# the ReplicaSet's conditions and the namespace events, not in the pod list.
+if [ "$(kubectl get pods -n "$NS" --no-headers 2>/dev/null | wc -l)" -eq 0 ]; then
+  echo
+  echo "!! No pod was created. Why:"
+  kubectl describe deploy "$REL" -n "$NS" 2>/dev/null | sed -n '/Conditions:/,/Events:/p' | sed 's/^/   /'
+  kubectl describe rs -n "$NS" 2>/dev/null | grep -A6 -i 'conditions\|error\|failed' | head -20 | sed 's/^/   /'
+  echo "   --- recent events ---"
+  kubectl get events -n "$NS" --sort-by=.lastTimestamp 2>/dev/null | tail -15 | sed 's/^/   /'
+fi
 cat <<EOF
 
 >> The L1 becomes ready when it prints "L1 is ready!" — that means the
