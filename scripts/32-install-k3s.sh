@@ -137,9 +137,14 @@ else
   echo "   kubepods is restricted to '$EFF' but the L1 needs '$WANT_CPUS'"
   # A watchdog unit that re-applies the restriction will undo us every few
   # seconds, so it has to go first.
-  for u in $(systemctl list-unit-files --no-legend 2>/dev/null \
-             | awk '{print $1}' | grep -iE 'kubepods|ran-cpu'); do
-    echo "   disabling watchdog unit: $u"
+  # ONLY .service units, and only ones whose name is about cpus/cores.
+  # kubepods.slice and its children ARE THE CGROUPS THE PODS LIVE IN --
+  # matching them here and stopping them kills every pod on the node and
+  # takes the kubelet's cgroup hierarchy with it.
+  for u in $(systemctl list-unit-files --type=service --no-legend 2>/dev/null \
+             | awk '{print $1}' | grep -iE '\.service$' \
+             | grep -iE '(kubepod|ran).*(cpu|core)'); do
+    echo "   disabling watchdog service: $u"
     sudo systemctl disable --now "$u" >/dev/null 2>&1
   done
   sudo systemctl set-property --runtime kubepods.slice "AllowedCPUs=$WANT_CPUS" \
