@@ -41,11 +41,25 @@ firmware, PTP — is **out of scope** here: it is done once per box from NVIDIA'
 install guide. Everything from the RAN software up is fetched from scratch.
 
 ```bash
-./scripts/20-preflight.sh      # verify the host; changes nothing
-docker login nvcr.io           # you do this; the scripts never touch your key
-./scripts/21-fetch-stack.sh    # Aerial image (~26 GB) + OAI + dApp sources
-./scripts/22-build-dapp.sh     # PRB-Power dApp over the E3 interface
+./scripts/20-preflight.sh      # is the host Aerial-ready? changes nothing
+./scripts/21-fetch-stack.sh    # Aerial image (pulls anonymously) + OAI + dApp sources
+cp site.example.yaml site/site.yaml && $EDITOR site/site.yaml
+./scripts/31-build-stack.sh    # compile L1, build the L2 image — all from stack/
+./scripts/32-install-k3s.sh    # cluster, pinned off the isolated cores
+./scripts/33-render-config.sh  # site.yaml + upstream templates -> site/rendered/
+./scripts/22-build-dapp.sh     # optional: PRB-Power dApp over the E3 interface
 ```
+
+**Portability is the point.** Everything above works on a bare server: the
+sources are version-pinned clones, the tools install themselves, and every
+site-specific value comes from `site/site.yaml`. Given the same `site.yaml`, two
+different servers render byte-identical configs. Nothing is copied out of an
+existing deployment and nothing is assumed to be lying around on the box.
+
+`30-harvest-params.sh` is the one exception, and it is **optional**: on a host
+that already ran this stack, it reads the parameter *values* out of the old
+configs to save you transcribing them. It copies no files. On a new site you
+fill in `site/site.yaml` by hand and never run it.
 
 ## Site-specific configuration
 

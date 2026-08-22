@@ -119,11 +119,12 @@ if have docker && docker info >/dev/null 2>&1; then
 else
   bad "docker not usable by this user"
 fi
-# NGC access: the Aerial image is not public.
-if grep -q 'nvcr.io' "$HOME/.docker/config.json" 2>/dev/null; then
-  ok "nvcr.io credentials present"
+# The Aerial image pulls anonymously; what matters is reaching the registry.
+if curl -sfI --max-time 8 https://nvcr.io/v2/ >/dev/null 2>&1 \
+   || curl -s --max-time 8 -o /dev/null -w '%{http_code}' https://nvcr.io/v2/ 2>/dev/null | grep -qE '200|401'; then
+  ok "nvcr.io reachable (the Aerial image pulls without a login)"
 else
-  warn "not logged in to nvcr.io — run: docker login nvcr.io   (username: \$oauthtoken)"
+  warn "cannot reach nvcr.io — needed only if the Aerial image is not already local"
 fi
 
 sec "Disk"

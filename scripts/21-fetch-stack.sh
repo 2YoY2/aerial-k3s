@@ -7,9 +7,9 @@
 # Everything lands in ./stack/ (untracked). Re-running is safe: existing clones
 # are fetched and checked out to the pinned ref, existing images are skipped.
 #
-# You must be logged in to NGC first -- the Aerial image is not public:
-#     docker login nvcr.io          # username: $oauthtoken, password: your NGC API key
-# Do that yourself; this script never handles your key.
+# The Aerial image pulls anonymously from NGC -- no login, no API key. If a
+# future release turns out to be gated, the pull fails with a clear auth error
+# and you run `docker login nvcr.io` yourself; this script never handles keys.
 set -uo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -41,22 +41,16 @@ clone_at() {
 step "Aerial L1 image: $AERIAL_IMAGE:$AERIAL_TAG"
 # Check for the image BEFORE checking credentials: a box that already has it
 # needs no NGC login at all, and demanding one there is just a false alarm.
-if docker image inspect "$AERIAL_IMAGE:$AERIAL_TAG" >/dev/null 2>&1; then
-  echo "   already present locally — no NGC login needed"
-  echo "   id: $(docker image inspect -f '{{.Id}}' "$AERIAL_IMAGE:$AERIAL_TAG" | cut -c8-19)"
-elif ! grep -q 'nvcr.io' "$HOME/.docker/config.json" 2>/dev/null; then
-  cat <<'MSG'
-   Image absent and not logged in to nvcr.io. Run this yourself, then re-run:
-
-       docker login nvcr.io
-
-   Username is the literal string:  $oauthtoken
-   Password is your NGC API key from https://ngc.nvidia.com  (Setup > API Key)
-MSG
-  fail=1
+# Always pull. When the local copy already matches the registry this is a no-op
+# that prints "Image is up to date", and it simultaneously PROVES the local copy
+# is byte-identical to what NGC published -- which matters on a reused host,
+# where an inherited image is otherwise just something that happens to be there.
+echo "   pulling (no-op if already current; ~26 GB on a cold host)..."
+if docker pull "$AERIAL_IMAGE:$AERIAL_TAG"; then
+  echo "   digest: $(docker image inspect -f '{{range .RepoDigests}}{{.}}{{end}}' "$AERIAL_IMAGE:$AERIAL_TAG" 2>/dev/null)"
 else
-  echo "   pulling ~26 GB, this takes a while..."
-  docker pull "$AERIAL_IMAGE:$AERIAL_TAG" || { echo "   pull failed"; fail=1; }
+  echo "   pull failed. If this is an auth error, run: docker login nvcr.io"
+  fail=1
 fi
 
 # Source tree: config templates, run_l1.sh, and the cuBB build scripts. The
