@@ -38,16 +38,27 @@ else
     || { echo "k3s install failed" >&2; exit 1; }
 fi
 
-echo ">> pinning the k3s service to housekeeping cores ($HOUSEKEEPING)"
-sudo mkdir -p /etc/systemd/system/k3s.service.d
-sudo tee /etc/systemd/system/k3s.service.d/cpu-affinity.conf >/dev/null <<EOF
-# The RAN owns the isolated cores. Keep the control plane off them.
-[Service]
-CPUAffinity=$HOUSEKEEPING
-EOF
-sudo systemctl daemon-reload
-sudo systemctl restart k3s
-sleep 5
+# NOT pinning k3s with CPUAffinity, deliberately.
+#
+# It looks prudent -- keep the control plane off the RAN cores -- but it is
+# redundant and it bites. Redundant because isolcpus already removes those
+# cores from the default affinity mask, so k3s and every ordinary process
+# lands on the housekeeping cores anyway. It bites because CPUAffinity is
+# inherited by everything k3s spawns, and a control plane confined to four
+# cores can fail to finish the heavy reconciliation after a cold start: on
+# this host it produced a crash loop of 79 restarts, whose symptoms
+# (apiserver refusing connections, pods stuck ContainerCreating) look
+# nothing like a CPU constraint.
+#
+# If you ever do want it, add the drop-in yourself and watch NRestarts:
+#   /etc/systemd/system/k3s.service.d/cpu-affinity.conf  ->  CPUAffinity=0-3
+if [ -f /etc/systemd/system/k3s.service.d/cpu-affinity.conf ]; then
+  echo ">> removing a previously-added k3s CPUAffinity drop-in (see comment)"
+  sudo rm -f /etc/systemd/system/k3s.service.d/cpu-affinity.conf
+  sudo systemctl daemon-reload
+  sudo systemctl restart k3s
+  sleep 5
+fi
 
 echo ">> kubeconfig"
 mkdir -p "$HOME/.kube"
