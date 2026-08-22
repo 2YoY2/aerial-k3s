@@ -167,6 +167,13 @@ cpu:
   oai_gnb: "17-19"
   oai_poll_core: $(n tr_s_poll_core)
 
+aerial:
+  mps_sm_ul_order: $(y mps_sm_ul_order)
+  pusch_aggr_per_ctx: $(y pusch_aggr_per_ctx)
+  prach_aggr_per_ctx: $(y prach_aggr_per_ctx)
+  pucch_aggr_per_ctx: $(y pucch_aggr_per_ctx)
+  srs_aggr_per_ctx: $(y srs_aggr_per_ctx)
+
 dapp:
   enabled: true
   variant: python

@@ -95,6 +95,16 @@ cpu:
   oai_gnb: "17-19"
   oai_poll_core: 19
 
+# Global cuPHY tuning, from the L1 config that works with YOUR RU.
+# These are not cosmetic: prach_aggr_per_ctx too low makes
+# cuphyValidatePrachParams reject the cell with "pOccaPrms is null".
+aerial:
+  mps_sm_ul_order: 20
+  pusch_aggr_per_ctx: 6
+  prach_aggr_per_ctx: 4
+  pucch_aggr_per_ctx: 4
+  srs_aggr_per_ctx: 3
+
 dapp:
   enabled: true              # sets data_core + e3_agent_enable in the L1 config
   variant: python            # python | triton | triton-grpc

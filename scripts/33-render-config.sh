@@ -68,11 +68,32 @@ for k in eAxC_id_ssb_pbch:ssb_pbch eAxC_id_pdcch:pdcch eAxC_id_pdsch:pdsch eAxC_
   yq -i ".cuphydriver_config.$CELLS[0].${k%%:*} = $(a ".ru.eaxc.${k##*:}")" "$L1"
 done
 
-# O-RAN timing windows — the most RU-specific values in the stack.
+# O-RAN timing windows and PCP go on EVERY cell, not just cell 0.
+#
+# The other cell entries are upstream placeholders pointing at RUs that do not
+# exist here, but the L1 still validates them at CONFIG.request time, and a
+# block carrying the vendor's reference timing alongside ours is inconsistent.
+# The known-good config on this site sets them identically across all cells.
+NCELLS="$(yq ".cuphydriver_config.$CELLS | length" "$L1")"
 for t in T1a_max_cp_ul_ns T1a_min_cp_ul_ns T1a_max_cp_dl_ns T1a_min_cp_dl_ns \
          T1a_max_up_ns Ta4_min_ns Ta4_max_ns Tcp_adv_dl_ns ul_u_plane_tx_offset_ns; do
   v="$(s ".ru.timing.$t")"
-  [ -n "$v" ] && [ "$v" != "0" ] && yq -i ".cuphydriver_config.$CELLS[0].$t = $v" "$L1"
+  [ -n "$v" ] && [ "$v" != "0" ] && yq -i ".cuphydriver_config.$CELLS[].$t = $v" "$L1"
+done
+yq -i ".cuphydriver_config.$CELLS[].pcp = $PCP" "$L1"
+echo "   timing + pcp applied to all $NCELLS cells"
+
+# Global cuPHY tuning. NOT cosmetic: prach_aggr_per_ctx in particular decides
+# how many PRACH occasions a context aggregates, and too low a value makes
+# cuphyValidatePrachParams reject the cell with "pOccaPrms is null" -- which
+# reads like a PRACH *configuration* error in the gNB conf, not a cuPHY
+# capacity one.
+for k in mps_sm_ul_order pusch_aggr_per_ctx prach_aggr_per_ctx pucch_aggr_per_ctx srs_aggr_per_ctx; do
+  v="$(s ".aerial.$k")"
+  if [ -n "$v" ] && [ "$v" != "null" ] && [ "$v" != "0" ]; then
+    yq -i ".cuphydriver_config.$k = $v" "$L1"
+    echo "   aerial.$k = $v"
+  fi
 done
 
 # CPU pinning: absolute core ids, which must sit inside the kernel's isolcpus.
@@ -169,6 +190,17 @@ if [ "$(s .dapp.enabled)" = "true" ]; then
   ck "L1 data_core" "$(s .cpu.data_core)" "$(yq '.cuphydriver_config.data_config.data_core' "$L1")"
   ck "L1 e3_agent_enable" "1" "$(yq '.cuphydriver_config.data_config.e3_agent_enable' "$L1")"
 fi
+# Global tuning, and the LAST cell -- proving the loop reached every entry and
+# not just cell 0, which is the mistake this check exists to catch.
+for k in mps_sm_ul_order pusch_aggr_per_ctx prach_aggr_per_ctx; do
+  want="$(s ".aerial.$k")"
+  [ -n "$want" ] && [ "$want" != "0" ] && [ "$want" != "null" ] \
+    && ck "L1 $k" "$want" "$(yq ".cuphydriver_config.$k" "$L1")"
+done
+LAST=$(( $(yq ".cuphydriver_config.$CELLS | length" "$L1") - 1 ))
+ck "L1 cell$LAST pcp"  "$PCP" "$(yq ".cuphydriver_config.$CELLS[$LAST].pcp" "$L1")"
+ck "L1 cell$LAST T1a_min_cp_dl_ns" "$(s .ru.timing.T1a_min_cp_dl_ns)" \
+   "$(yq ".cuphydriver_config.$CELLS[$LAST].T1a_min_cp_dl_ns" "$L1")"
 if [ -f "${L2:-}" ]; then
   gv() { grep -m1 -E "^[[:space:]]*$1[[:space:]]*=" "$L2" \
          | sed -E 's/^[^=]*=[[:space:]]*//; s/[;,].*//; s/[[:space:]]*#.*//' | tr -d '"L '; }
