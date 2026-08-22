@@ -107,37 +107,36 @@ build_l1() {
 build_l2() {
   [ -d "$OAI_SRC" ] || die "missing $OAI_SRC — run ./scripts/21-fetch-stack.sh"
 
-  step "L2: staging nvIPC sources"
-  # The gNB Dockerfile does `tar -xvzf nvipc_src.*.tar.gz` at the root of the
-  # build context, so the tarball must land in the OAI tree before we build.
+  step "L2: generating nvIPC sources (pack_nvipc.sh)"
+  # The tarball is NOT shipped -- not in git, not in the image. It is GENERATED
+  # from the cuBB tree by pack_nvipc.sh, per OAI's Aerial FAPI split tutorial.
+  # That is why a long-lived host accumulates several of them bearing different
+  # dates: one per time somebody packed.
   #
-  # Take it from the Aerial SOURCE tree: it is the same pinned release we are
-  # deploying, it is already on disk, and no container is needed. Falling back
-  # to the image means asking the image where it keeps the file rather than
-  # guessing paths -- guessing is what broke this before.
-  rm -rf "$OAI_SRC/.nvipc-stage"
-  local tb=""
-  tb="$(ls -1 "$AERIAL_SRC"/cuPHY-CP/gt_common_libs/nvipc_src.*.tar.gz 2>/dev/null | sort | tail -1)"
-  if [ -n "$tb" ]; then
-    echo "   from the pinned Aerial source tree: $(basename "$tb")"
-  else
-    echo "   not in the source tree; asking the image where it keeps nvIPC"
-    local found cid
-    found="$(docker run --rm --entrypoint bash "$AERIAL_IMAGE:$AERIAL_TAG" -lc \
-             "find / -name 'nvipc_src*.tar.gz' -not -path '/proc/*' 2>/dev/null | sort | tail -1" 2>/dev/null)"
-    if [ -n "$found" ]; then
-      cid="$(docker create "$AERIAL_IMAGE:$AERIAL_TAG")" || die "could not create helper container"
-      docker cp "$cid:$found" "$OAI_SRC/" >/dev/null 2>&1
-      docker rm -f "$cid" >/dev/null 2>&1
-      tb="$OAI_SRC/$(basename "$found")"
-      echo "   extracted from the image: $(basename "$found")"
-    fi
-  fi
-  # Do not "continue" without it. The build would run for a few seconds and die
-  # inside the Dockerfile on an opaque tar error instead of here, with a reason.
-  [ -n "$tb" ] && [ -f "$tb" ] || die "no nvipc_src tarball found in $AERIAL_SRC/cuPHY-CP/gt_common_libs/ or in the Aerial image — the gNB cannot be built with the FAPI split without it"
-  cp -f "$tb" "$OAI_SRC/" 2>/dev/null || true
-  ls -1 "$OAI_SRC"/nvipc_src.*.tar.gz | sed 's|.*/|   staged: |'
+  # Packing from the tree we just built is also what guarantees compatibility:
+  # the nvIPC the L2 links against comes from the same source as the L1 it will
+  # talk to, so the FAPI contract cannot drift between them.
+  local GTL="$AERIAL_SRC/cuPHY-CP/gt_common_libs"
+  [ -f "$GTL/pack_nvipc.sh" ] || die "pack_nvipc.sh not found in $GTL"
+
+  docker run --rm \
+    -v "$AERIAL_SRC":/opt/nvidia/cuBB \
+    -w /opt/nvidia/cuBB/cuPHY-CP/gt_common_libs \
+    -e cuBB_SDK=/opt/nvidia/cuBB \
+    "$AERIAL_IMAGE:$AERIAL_TAG" \
+    bash -lc "chmod +x pack_nvipc.sh && ./pack_nvipc.sh" \
+    || die "pack_nvipc.sh failed"
+
+  # It runs as root against a bind mount; hand the result back to the user.
+  [ "$(id -u)" != 0 ] && sudo chown "$(id -u):$(id -g)" "$GTL"/nvipc_src.*.tar.gz 2>/dev/null
+  local tb; tb="$(ls -1t "$GTL"/nvipc_src.*.tar.gz 2>/dev/null | head -1)"
+  [ -n "$tb" ] || die "pack_nvipc.sh ran but produced no tarball in $GTL"
+
+  # The Dockerfile does `tar -xvzf nvipc_src.*.tar.gz`, so exactly one may be
+  # present in the build context -- a second one makes that glob fail.
+  rm -f "$OAI_SRC"/nvipc_src.*.tar.gz
+  cp -f "$tb" "$OAI_SRC/"
+  echo "   packed and staged: $(basename "$tb")"
 
   step "L2: building the OAI gNB image with the Aerial FAPI split"
   local df
@@ -156,17 +155,18 @@ build_l2() {
   # and flags nobody can now inspect -- and it would silently become a layer
   # underneath the image we ship. "Fresh" has to mean the whole chain, not just
   # the top of it. Set REUSE_BASE=1 to trade that guarantee for build time.
-  for stage in base build; do
-    local sdf img="ran-$stage:latest"
-    sdf="$(ls "$OAI_SRC"/docker/Dockerfile.$stage.* 2>/dev/null | grep -v aerial | head -1)"
-    [ -n "$sdf" ] || continue
-    if [ "${REUSE_BASE:-0}" = 1 ] && docker image inspect "$img" >/dev/null 2>&1; then
-      echo "   $img present and REUSE_BASE=1 — reusing an inherited image"
-    else
-      echo "   building $img from $(basename "$sdf")"
-      docker build --pull -t "$img" -f "$sdf" "$OAI_SRC" || die "$img build failed"
-    fi
-  done
+  # Only ran-base. The gNB Dockerfile is multi-stage and defines its own
+  # `ran-build` stage FROM ran-base, so building a separate ran-build image
+  # would be dead work that nothing consumes.
+  local sdf
+  sdf="$(ls "$OAI_SRC"/docker/Dockerfile.base.* 2>/dev/null | grep -v aerial | head -1)"
+  [ -n "$sdf" ] || die "no Dockerfile.base.* in $OAI_SRC/docker"
+  if [ "${REUSE_BASE:-0}" = 1 ] && docker image inspect ran-base:latest >/dev/null 2>&1; then
+    echo "   ran-base:latest present and REUSE_BASE=1 — reusing an inherited image"
+  else
+    echo "   building ran-base:latest from $(basename "$sdf")"
+    docker build --pull -t ran-base:latest -f "$sdf" "$OAI_SRC" || die "ran-base build failed"
+  fi
 
   docker build -t oai-gnb-aerial:latest -f "$df" "$OAI_SRC" \
     || die "oai-gnb-aerial build failed"
