@@ -36,16 +36,25 @@ build_l1() {
     echo "   already built — delete build.$ARCH to force a rebuild"
     return 0
   fi
-  # run_l1.sh documents the canonical build entry point; prefer it if present
-  # rather than inventing a cmake line that may drift from the release.
-  local script="testBenches/phase4_test_scripts/build_aerial_sdk.sh"
-  local cmd
-  if [ -f "$AERIAL_SRC/$script" ]; then
-    echo "   using in-tree $script"
-    cmd="chmod +x $script && ./$script"
+  # Use the release's OWN build entry point. Inventing a cmake line risks
+  # building with different flags than the release expects, which surfaces much
+  # later as subtle runtime failure rather than an honest compile error.
+  # run_l1.sh names the first of these in its header comment.
+  local cmd="" script=""
+  for c in testBenches/phase4_test_scripts/build_aerial_sdk.sh \
+           cubb_scripts/build.sh cubb_scripts/install/build.sh build.sh; do
+    [ -f "$AERIAL_SRC/$c" ] && { script="$c"; break; }
+  done
+  if [ -n "$script" ]; then
+    echo "   using in-tree build script: $script"
+    cmd="chmod +x '$script' && ./'$script'"
   else
-    echo "   $script absent; falling back to the documented cmake flow"
-    cmd="cmake -Bbuild.$ARCH -GNinja . && cmake --build build.$ARCH -j\$(nproc --all)"
+    echo "   No in-tree build script found. What this release ships:"
+    ls -1 "$AERIAL_SRC"/*.sh 2>/dev/null | sed 's|.*/|     |'
+    ls -1 "$AERIAL_SRC"/cubb_scripts/ 2>/dev/null | sed 's/^/     cubb_scripts\//'
+    ls -1 "$AERIAL_SRC"/testBenches/phase4_test_scripts/ 2>/dev/null | head -10 | sed 's/^/     testBenches\/phase4_test_scripts\//'
+    [ -f "$AERIAL_SRC/CMakeLists.txt" ] && echo "     (CMakeLists.txt is present)"
+    die "cannot pick a build command safely — tell me which of the above to use"
   fi
   docker run --rm --gpus all \
     -v "$AERIAL_SRC":/opt/nvidia/cuBB \
