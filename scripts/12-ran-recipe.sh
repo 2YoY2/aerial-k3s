@@ -26,27 +26,33 @@ SELF_STACK="$(cd "$(dirname "$0")/.." && pwd)/stack"
 # report the candidate list back through a variable. Collect it in a file.
 CAND_FILE="$(mktemp)"
 trap 'rm -f "$CAND_FILE"' EXIT
-find_repo() {  # find_repo <remote-substring>
-  local m="$1" g r clean="" dirty=""
+# Emit EVERY modified tree, not just one. A box that has been worked on for a
+# while accumulates several generations of the same repo (e.g. an old 25-3
+# experiment beside the live 26-1 tree), and picking one means picking wrong
+# roughly half the time -- silently. Dump them all and let the reader judge.
+# Falls back to clean trees only if nothing is modified.
+find_repos() {  # find_repos <remote-substring>
+  local m="$1" g r dirty="" clean=""
   while read -r g; do
     r="$(dirname "$g")"
     case "$r" in "$SELF_STACK"/*|"$SELF_STACK") continue ;; esac
     git -C "$r" remote -v 2>/dev/null | grep -qi "$m" || continue
     if [ -n "$(git -C "$r" status -s 2>/dev/null)" ]; then
-      echo "    modified: $r" >> "$CAND_FILE"
-      [ -z "$dirty" ] && dirty="$r"
+      echo "    modified: $r ($(git -C "$r" describe --tags --always 2>/dev/null))" >> "$CAND_FILE"
+      dirty="$dirty$r"$'\n'
     else
-      echo "    clean   : $r" >> "$CAND_FILE"
-      [ -z "$clean" ] && clean="$r"
+      echo "    clean   : $r ($(git -C "$r" describe --tags --always 2>/dev/null))" >> "$CAND_FILE"
+      clean="$clean$r"$'\n'
     fi
   done < <(find "$HOME" -maxdepth 6 -name .git -type d 2>/dev/null)
-  [ -n "$dirty" ] && { echo "$dirty"; return 0; }
-  [ -n "$clean" ] && { echo "$clean"; return 0; }
-  return 1
+  [ -n "$dirty" ] && { printf '%s' "$dirty"; return 0; }
+  printf '%s' "$clean"
 }
 
-AERIAL="${AERIAL_REPO:-$(find_repo 'aerial-cuda-accelerated-ran')}"
-OAI="${OAI_REPO:-$(find_repo 'openairinterface5g')}"
+AERIAL_TREES="${AERIAL_REPO:-$(find_repos 'aerial-cuda-accelerated-ran')}"
+OAI_TREES="${OAI_REPO:-$(find_repos 'openairinterface5g')}"
+# versions.env names the release we intend to run; flag the tree that matches.
+PINNED_REF="$(. "$(dirname "$0")/../versions.env" 2>/dev/null; echo "${AERIAL_SRC_REF:-}")"
 
 sec() { printf '\n===== %s =====\n' "$*"; }
 # cat_file <label> <path> [maxlines]
@@ -63,10 +69,9 @@ cat_file() {
 }
 
 echo "########## RAN LAUNCH RECIPE ##########"
-echo "aerial repo: ${AERIAL:-NOT FOUND}"
-echo "oai repo   : ${OAI:-NOT FOUND}"
+echo "pinned Aerial ref (versions.env): ${PINNED_REF:-unset}"
 if [ -s "$CAND_FILE" ]; then
-  echo "  candidates considered (a modified tree wins; stack/ is skipped):"
+  echo "trees found (stack/ skipped; ALL modified ones are dumped below):"
   sort -u "$CAND_FILE"
 fi
 
@@ -86,18 +91,20 @@ systemctl list-unit-files --state=enabled --no-pager 2>/dev/null \
   | grep -iE 'ptp|phc|irq|tuned|cpu|nvidia|mps|aerial' || echo "(none matched)"
 
 # ---------------------------------------------------------------- Aerial L1
-if [ -n "${AERIAL:-}" ]; then
-  sec "AERIAL: VERSION + LOCAL CHANGES"
-  git -C "$AERIAL" describe --tags --always 2>&1
+printf '%s\n' "$AERIAL_TREES" | while read -r AERIAL; do
+  [ -n "$AERIAL" ] || continue
+  VER="$(git -C "$AERIAL" describe --tags --always 2>/dev/null)"
+  MARK=""; [ -n "$PINNED_REF" ] && [ "$VER" = "$PINNED_REF" ] && MARK="  <<< MATCHES PINNED REF"
+  sec "AERIAL TREE: $AERIAL ($VER)$MARK"
   git -C "$AERIAL" log -1 --oneline 2>&1
   git -C "$AERIAL" status -s 2>&1 | head -30
 
-  sec "AERIAL: DIFF vs UPSTREAM (the site-specific customisation)"
-  git -C "$AERIAL" diff 2>/dev/null | redact | head -300
-  echo "... [diff truncated at 300 lines]"
+  sec "AERIAL DIFF vs UPSTREAM — $VER (the site-specific customisation)"
+  git -C "$AERIAL" diff 2>/dev/null | redact | head -200
+  echo "... [diff capped at 200 lines per tree]"
 
-  cat_file "AERIAL: run_l1.sh"            "$AERIAL/run_l1.sh"                 80
-  cat_file "AERIAL: versions.sh"          "$AERIAL/cubb_scripts/install/versions.sh" 40
+  cat_file "AERIAL run_l1.sh — $VER"  "$AERIAL/run_l1.sh"                 90
+  cat_file "AERIAL versions.sh"       "$AERIAL/cubb_scripts/install/versions.sh" 40
   # NVIDIA ships a config per reference platform/RU, so never hardcode one
   # filename. The file actually in use is the one git reports as modified;
   # everything else is stock and tells you nothing about this deployment.
@@ -124,12 +131,27 @@ if [ -n "${AERIAL:-}" ]; then
                    grep -nE 'aerial_sdk_version|l2adapter_filename|nic:|workers_|low_priority_core' "$p" | head -15 ;;
     esac
   done
-fi
+done
+
+# The live compose bind-mounts a cuBB tree into the L1 container; that path is
+# the ground truth for which tree is actually running, and it is often NOT one
+# of the git checkouts found above.
+sec "cuBB TREE REFERENCED BY THE LIVE COMPOSE"
+for p in "$HOME/aerial-cuda-accelerated-ran" /opt/nvidia/cuBB /opt/cuBB; do
+  if [ -e "$p" ]; then
+    printf '%s -> %s\n' "$p" "$(readlink -f "$p")"
+    [ -d "$p/.git" ] && echo "   git: $(git -C "$p" describe --tags --always 2>/dev/null) $(git -C "$p" status -s 2>/dev/null | head -5 | tr '\n' ' ')"
+    ls -1 "$p" 2>/dev/null | head -8 | sed 's/^/   /'
+  else
+    echo "$p: absent"
+  fi
+done
 
 # ---------------------------------------------------------------- OAI L2/L3
-if [ -n "${OAI:-}" ]; then
+printf '%s\n' "$OAI_TREES" | while read -r OAI; do
+  [ -n "$OAI" ] || continue
   D="$OAI/ci-scripts/yaml_files/sa_gnb_aerial"
-  sec "OAI: VERSION + LOCAL CHANGES"
+  sec "OAI TREE: $OAI"
   git -C "$OAI" describe --tags --always 2>&1
   git -C "$OAI" status -s 2>&1 | head -30
 
@@ -141,9 +163,9 @@ if [ -n "${OAI:-}" ]; then
   cat_file "OAI: docker-compose-ue.yaml"          "$D/docker-compose-ue.yaml"          60
 
   sec "OAI: DIFF vs UPSTREAM"
-  git -C "$OAI" diff 2>/dev/null | redact | head -200
-  echo "... [diff truncated at 200 lines]"
-fi
+  git -C "$OAI" diff 2>/dev/null | redact | head -250
+  echo "... [diff capped at 250 lines per tree]"
+done
 
 sec "RAN-RELATED IMAGES"
 docker images 2>/dev/null | grep -iE 'aerial|oai|ran-|rancher|nvcr' || echo "(none)"
