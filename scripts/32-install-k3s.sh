@@ -77,12 +77,16 @@ if docker info 2>/dev/null | grep -qi 'Default Runtime: nvidia'; then
     || kubectl apply -f https://raw.githubusercontent.com/NVIDIA/k8s-device-plugin/v0.17.1/deployments/static/nvidia-device-plugin.yml
 else
   cat <<'MSG'
-   Docker's default runtime is NOT nvidia, so pods cannot get the GPU.
-   Add this to /etc/docker/daemon.json and restart docker YOURSELF -- other
-   workloads run on this box and the restart interrupts them:
+   Docker's default runtime is NOT nvidia, so pods cannot get the GPU and
+   the device plugin has nothing to enumerate. Run these YOURSELF -- the
+   restart interrupts every container on the host:
 
-       { "default-runtime": "nvidia",
-         "runtimes": { "nvidia": { "path": "nvidia-container-runtime", "args": [] } } }
+       sudo cp /etc/docker/daemon.json /etc/docker/daemon.json.bak 2>/dev/null
+       sudo nvidia-ctk runtime configure --runtime=docker --set-as-default
+       sudo systemctl restart docker
+
+   Use nvidia-ctk rather than writing daemon.json by hand: it merges the
+   runtime in and preserves any other settings the file already holds.
 
    Then re-run this script to install the device plugin.
 MSG

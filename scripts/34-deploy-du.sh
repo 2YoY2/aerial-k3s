@@ -111,12 +111,17 @@ else
     if [ -z "$GPUCAP" ]; then
       cat <<'MSG'
    The node exposes no GPU, so a Pod requesting one can never be scheduled.
-   Fix, in order:
-     1. Make nvidia Docker's default runtime in /etc/docker/daemon.json:
-          { "default-runtime": "nvidia",
-            "runtimes": { "nvidia": { "path": "nvidia-container-runtime", "args": [] } } }
-     2. sudo systemctl restart docker
-     3. ./scripts/32-install-k3s.sh     (installs the device plugin)
+   Fix, in order (nvidia-ctk MERGES into daemon.json; hand-editing or piping
+   a fresh file over it discards whatever else that file already configures):
+
+     sudo cp /etc/docker/daemon.json /etc/docker/daemon.json.bak 2>/dev/null
+     sudo nvidia-ctk runtime configure --runtime=docker --set-as-default
+     sudo systemctl restart docker
+     ./scripts/32-install-k3s.sh          # then installs the device plugin
+
+   Restarting Docker restarts every container on the host, including the
+   cluster's own system pods. They recover; check `docker ps` first so you
+   know what you are interrupting.
 MSG
     fi
   fi
