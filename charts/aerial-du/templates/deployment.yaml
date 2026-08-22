@@ -145,8 +145,20 @@ spec:
               {{- end }}
             {{- end }}
           resources:
+            {{- if .Values.l2.requestGpu }}
             limits:
               nvidia.com/gpu: 1
+            {{- end }}
+            # No GPU by default, and this is a scheduling constraint rather
+            # than a preference: extended resources SUM across the containers
+            # of a Pod, so asking for one here plus one in the L1 needs TWO
+            # GPUs and the Pod stays Pending forever on a single-GPU node.
+            #
+            # The L2 does not need it: nvIPC is compiled for this side with
+            # NVIPC_CUDA_ENABLE=OFF, so it reaches FAPI purely through shared
+            # memory and never touches CUDA. The reference docker-compose
+            # reserves a GPU here, but compose reservations do not partition
+            # the device the way Kubernetes requests do.
           livenessProbe:
             exec:
               command: ["bash", "-c", "pgrep -f softmodem >/dev/null"]

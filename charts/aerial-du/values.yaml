@@ -28,6 +28,10 @@ l2:
     tag: latest
     pullPolicy: IfNotPresent
   additionalOptions: "--log_config.global_log_options level,nocolor,utc_time"
+  # Leave false on a single-GPU node: GPU requests sum across a Pod's
+  # containers, so true here would demand two GPUs and never schedule.
+  # The L2 links nvIPC with CUDA disabled and does not need the device.
+  requestGpu: false
   # gNB config file: provide via ConfigMap generated from site/, or set
   # hostPath to mount it directly from disk.
   configHostPath: ""          # e.g. /opt/aerial/gnb.conf
