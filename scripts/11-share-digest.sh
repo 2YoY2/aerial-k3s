@@ -20,13 +20,7 @@ DIR="${1:-$(ls -dt "$HOME"/aerial-inventory-*/ 2>/dev/null | head -1)}"
 DIR="${DIR%/}"
 
 # Blank out secret-shaped values wherever they appear.
-redact() {
-  sed -E \
-    -e 's/([A-Za-z0-9_]*(KEY|TOKEN|SECRET|PASSWORD|PASSWD|CREDENTIAL|APIKEY)[A-Za-z0-9_]*)=[^ ;"]*/\1=***REDACTED***/gI' \
-    -e 's/\b(Bearer|Basic)[[:space:]]+[A-Za-z0-9._~+\/-]+=*/\1 ***REDACTED***/gI' \
-    -e 's/("(auth|password|identitytoken|registrytoken)":[[:space:]]*")[^"]*/\1***REDACTED***/gI' \
-    -e 's/^([[:space:]]*(-[[:space:]]+)?([A-Za-z0-9-]+_)?(key|token|secret|password|passwd|credential|apikey)[[:space:]]*:)[[:space:]]*[^[:space:]].*/\1 ***REDACTED***/I'
-}
+. "$(dirname "$0")/lib-redact.sh"
 
 sec() { printf '\n===== %s =====\n' "$*"; }
 
