@@ -73,6 +73,12 @@ n()  { local v; v="$(g "$1")"; echo "${v:-0}"; }
 # Match a dotted quad, not any digit run: a loose [0-9.]+ picks the "4" out of
 # the literal "ipv4" before it ever reaches the address.
 AMF="$([ -f "${GNB:-}" ] && grep -m1 -oE 'ipv4[[:space:]]*=[[:space:]]*"[0-9.]+"' "$GNB" | grep -oE '[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+')"
+# Configs on a reused host disagree about the AMF. An operator-confirmed value
+# always wins over whatever a stale file says.
+if [ -n "${AMF_IP:-}" ]; then
+  [ -n "$AMF" ] && [ "$AMF" != "$AMF_IP" ] && echo "   AMF: using confirmed $AMF_IP (config said $AMF)"
+  AMF="$AMF_IP"
+fi
 N2="$([ -f "${GNB:-}" ] && grep -m1 -oE 'GNB_IPV4_ADDRESS_FOR_NG_AMF[^"]*"[0-9./]+"' "$GNB" | grep -oE '[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+')"
 MCC="$(g mcc)"; MNC="$(g mnc)"
 
