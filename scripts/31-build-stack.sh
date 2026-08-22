@@ -69,13 +69,34 @@ build_l1() {
     [ -f "$AERIAL_SRC/CMakeLists.txt" ] && echo "     (CMakeLists.txt is present)"
     die "cannot pick a build command safely — tell me which of the above to use"
   fi
+  # isolcpus removes cores 4-19 from the default affinity mask, so an
+  # unconstrained build container sees only the housekeeping cores -- on a
+  # 20-core box that is a 4-core build. The RAN is not running during a build,
+  # so hand it the whole machine. Override with BUILD_CPUS if the RAN is live.
+  # (Expect PTP rms to wobble while this runs; it re-locks afterwards.)
+  local ncpu; ncpu="$(nproc --all 2>/dev/null || nproc)"
+  local cpus="${BUILD_CPUS:-0-$((ncpu - 1))}"
+  echo "   building on cores $cpus (host has $ncpu; without this it would use $(nproc))"
+
+  # SYS_NICE silences the chrt warning: the build script tries to set a
+  # real-time policy for itself. Harmless when denied, but noisy.
   docker run --rm --gpus all \
+    --cpuset-cpus="$cpus" \
+    --cap-add=SYS_NICE \
     -v "$AERIAL_SRC":/opt/nvidia/cuBB \
     -v /usr/src:/usr/src -v /lib/modules:/lib/modules \
     -w /opt/nvidia/cuBB \
     -e cuBB_SDK=/opt/nvidia/cuBB \
     "$AERIAL_IMAGE:$AERIAL_TAG" \
     bash -lc "$cmd" || die "cuBB build failed (see output above)"
+
+  # The container builds as root, so the output would be root-owned on the host
+  # and need sudo to clean up or rebuild later.
+  if [ -d "$AERIAL_SRC/build.$ARCH" ] && [ "$(stat -c %u "$AERIAL_SRC/build.$ARCH")" = 0 ] && [ "$(id -u)" != 0 ]; then
+    echo "   returning ownership of build.$ARCH to $(id -un)"
+    sudo chown -R "$(id -u):$(id -g)" "$AERIAL_SRC/build.$ARCH" 2>/dev/null || \
+      echo "   (could not chown; you will need sudo to remove build.$ARCH)"
+  fi
 
   [ -x "$AERIAL_SRC/build.$ARCH/cuPHY-CP/cuphycontroller/examples/cuphycontroller_scf" ] \
     || die "build finished but cuphycontroller_scf is missing from build.$ARCH"
