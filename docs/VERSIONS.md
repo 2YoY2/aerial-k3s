@@ -152,3 +152,30 @@ previously ran the L1 outside Kubernetes may fence kubepods away from them — s
 `32-install-k3s.sh`, which detects and widens that. Excluding them is redundant
 anyway: `isolcpus` already stops the scheduler placing ordinary threads there,
 so only a deliberate `sched_setaffinity` ever lands on an isolated core.
+
+## Known blocker: eCPRI flex parser on DGX Spark CX-7
+
+The L1 reaches the fronthaul and then reports:
+
+```
+mlx5_net: Dynamic flex parser is not supported for device <fronthaul-bdf>
+[FH.PEER] eCPRI parser not supported on NIC <fronthaul-bdf>, retrying without eCPRI
+```
+
+**This is a known NVIDIA firmware defect specific to the DGX Spark CX-7, not a
+configuration error.** NVIDIA staff on the Aerial developer forum: *"We also
+know about this flexparser error, which causes several issues. This error occurs
+only on the DGX Spark-specific CX-7 configuration."* They state the upcoming NIC
+firmware fixes it, with no release date announced.
+
+Affected firmware: **28.47.1088**, PSID **NVD0000000087**.
+
+The five `mlxconfig` settings are still required and are *not* the problem —
+verify them, but having them correct does not avoid this. `mlx5_flex_parser_
+ecpri_alloc()` returns `-95` (ENOTSUP) regardless.
+
+Note the failure mode: the L1 **degrades rather than aborting**. It logs the
+warning, retries without eCPRI, and keeps running, so it looks alive.
+
+Nothing on the Kubernetes side changes this. Track the forum thread and the
+NIC firmware release; everything else in this repo is unaffected and ready.
