@@ -16,6 +16,26 @@ aerial-k3s/
                            github.com/openairinterface/orchestration
 ```
 
+## Site-specific configuration
+
+This repo is **public and vendor-neutral** — it must work on any Aerial-capable
+host, not one particular lab. Anything that identifies a deployment (fronthaul
+MAC and VLAN, PCIe addresses, cell identity, management IPs, NGC credentials,
+kubeconfigs) belongs in the untracked `site/` directory, never in a tracked file.
+
+Install the guardrail once per clone:
+
+```bash
+./scripts/install-guardrails.sh
+```
+
+It adds a pre-commit hook that refuses to commit MAC addresses, PCIe IDs, NGC
+keys, private keys, or inventory captures, and it self-tests on install. For a
+genuine false positive, `git commit --no-verify`.
+
+The inventory scripts (`10`, `11`, `12`) write outside the repo and their output
+is gitignored — but treat it as sensitive: it describes your network.
+
 ---
 
 ## 0. Reality check: Aerial vs OAI
@@ -23,7 +43,7 @@ aerial-k3s/
 | | OAI gNB (this plan) | NVIDIA Aerial cuBB |
 |---|---|---|
 | L1 (PHY) | CPU (x86, AVX2) | GPU (cuPHY) |
-| Hardware needed | Any x86 server | A100/H100/GH200 **or** A100X/H100‑CX7 converged card + ConnectX‑6/7 NIC + PTP grandmaster |
+| Hardware needed | Any x86 server | A supported NVIDIA platform — data-center GPU (A100/H100/GH200), a converged card (A100X/H100‑CX7), or a Grace‑Blackwell system such as GB10 — plus a ConnectX‑6/7-class NIC and PTP grandmaster |
 | Radio | RF simulator (no radio needed), USRP, or O‑RAN 7.2 RU | O‑RAN 7.2 RU only |
 | Distribution | Public Docker Hub | NVIDIA NGC (requires NVIDIA developer/Aerial program access) |
 

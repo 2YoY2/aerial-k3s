@@ -13,8 +13,15 @@ charts/
 # Inventory captures — may contain host details, MACs, IPs, serials.
 # THIS REPO IS PUBLIC: never commit these.
 aerial-inventory-*/
+ran-recipe-*/
 *-inventory-*.tar.gz
 *.pcap
+
+# Site-specific values (fronthaul MAC/VLAN, PCIe ids, cell identity, creds).
+# The tracked tree stays generic; per-deployment values live here.
+# Enforced by the pre-commit hook from scripts/install-guardrails.sh
+/site/*
+!/site/README.md
 
 # kubeconfig / credentials — never commit
 kubeconfig*

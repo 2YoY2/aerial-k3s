@@ -73,14 +73,32 @@ if [ -n "${AERIAL:-}" ]; then
 
   cat_file "AERIAL: run_l1.sh"            "$AERIAL/run_l1.sh"                 80
   cat_file "AERIAL: versions.sh"          "$AERIAL/cubb_scripts/install/versions.sh" 40
-  # nvIPC transport between cuphycontroller and the OAI L2
-  cat_file "AERIAL: l2_adapter_config_P5G_DGX.yaml" \
-      "$AERIAL/cuPHY-CP/cuphycontroller/config/l2_adapter_config_P5G_DGX.yaml" 100
-  # The fronthaul cell block — MAC/VLAN/eAxC per cell
-  sec "AERIAL: FRONTHAUL CELL BLOCK"
-  sed -n '/^cell_configs:/,$p' \
-      "$AERIAL/cuPHY-CP/cuphycontroller/config/cuphycontroller_P5G_WNC_DGX.yaml" 2>/dev/null \
-      | head -80 | redact || echo "(cell_configs section not found)"
+  # NVIDIA ships a config per reference platform/RU, so never hardcode one
+  # filename. The file actually in use is the one git reports as modified;
+  # everything else is stock and tells you nothing about this deployment.
+  CFG="$AERIAL/cuPHY-CP/cuphycontroller/config"
+  sec "AERIAL: CONFIGS PRESENT (modified = the live one)"
+  ls -1 "$CFG"/*.yaml 2>/dev/null | sed "s|.*/||" | head -20
+  echo "-- locally modified:"
+  git -C "$AERIAL" status -s -- "$CFG" 2>/dev/null | head -10 || echo "(none)"
+
+  # Prefer the modified configs; fall back to whatever exists, capped.
+  mapfile -t LIVE < <(git -C "$AERIAL" status -s --porcelain -- "$CFG" 2>/dev/null \
+                        | awk '{print $NF}' | grep -E '\.yaml$' | head -4)
+  if [ "${#LIVE[@]}" -eq 0 ]; then
+    mapfile -t LIVE < <(cd "$AERIAL" 2>/dev/null && ls -1 "$CFG"/*.yaml 2>/dev/null | head -2)
+  fi
+  for f in "${LIVE[@]}"; do
+    [ -n "$f" ] || continue
+    p="$f"; [ -f "$p" ] || p="$AERIAL/$f"
+    [ -f "$p" ] || continue
+    case "$(basename "$p")" in
+      l2_adapter*) cat_file "AERIAL nvIPC: $(basename "$p")" "$p" 100 ;;
+      *)           sec "AERIAL FRONTHAUL: $(basename "$p")"
+                   sed -n '/cell_configs:/,$p' "$p" | head -60 | redact
+                   grep -nE 'aerial_sdk_version|l2adapter_filename|nic:|workers_|low_priority_core' "$p" | head -15 ;;
+    esac
+  done
 fi
 
 # ---------------------------------------------------------------- OAI L2/L3
