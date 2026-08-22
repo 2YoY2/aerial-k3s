@@ -15,12 +15,33 @@ set -uo pipefail
 . "$(dirname "$0")/lib-redact.sh"
 
 # Locate the trees by their git remote, so this works on any box.
+#
+# Once 21-fetch-stack.sh has run there are at least two clones of each repo: the
+# pristine one under stack/ and the deployment's own working tree. The pristine
+# clone has no local changes, so picking it yields an empty diff and tells you
+# nothing. Prefer a tree with uncommitted modifications -- that is the one
+# somebody actually configured -- and never pick our own stack/ clone.
+SELF_STACK="$(cd "$(dirname "$0")/.." && pwd)/stack"
+# find_repo is called from a command substitution, i.e. a subshell, so it cannot
+# report the candidate list back through a variable. Collect it in a file.
+CAND_FILE="$(mktemp)"
+trap 'rm -f "$CAND_FILE"' EXIT
 find_repo() {  # find_repo <remote-substring>
-  local m="$1" g r
+  local m="$1" g r clean="" dirty=""
   while read -r g; do
     r="$(dirname "$g")"
-    git -C "$r" remote -v 2>/dev/null | grep -qi "$m" && { echo "$r"; return 0; }
+    case "$r" in "$SELF_STACK"/*|"$SELF_STACK") continue ;; esac
+    git -C "$r" remote -v 2>/dev/null | grep -qi "$m" || continue
+    if [ -n "$(git -C "$r" status -s 2>/dev/null)" ]; then
+      echo "    modified: $r" >> "$CAND_FILE"
+      [ -z "$dirty" ] && dirty="$r"
+    else
+      echo "    clean   : $r" >> "$CAND_FILE"
+      [ -z "$clean" ] && clean="$r"
+    fi
   done < <(find "$HOME" -maxdepth 6 -name .git -type d 2>/dev/null)
+  [ -n "$dirty" ] && { echo "$dirty"; return 0; }
+  [ -n "$clean" ] && { echo "$clean"; return 0; }
   return 1
 }
 
@@ -44,6 +65,10 @@ cat_file() {
 echo "########## RAN LAUNCH RECIPE ##########"
 echo "aerial repo: ${AERIAL:-NOT FOUND}"
 echo "oai repo   : ${OAI:-NOT FOUND}"
+if [ -s "$CAND_FILE" ]; then
+  echo "  candidates considered (a modified tree wins; stack/ is skipped):"
+  sort -u "$CAND_FILE"
+fi
 
 sec "BOOT PARAMETERS (isolcpus / hugepages / iommu)"
 cat /proc/cmdline
