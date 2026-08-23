@@ -104,8 +104,12 @@ aerial:
   prach_aggr_per_ctx: 4
   pucch_aggr_per_ctx: 4
   srs_aggr_per_ctx: 3
-  # l2_adapter_config: upstream ships 1, working DGX deployments use 0.
-  tick_generator_mode: 0
+  # l2_adapter_config tick source. MUST stay 1 (sleep) on Aerial 26.1: mode 0
+  # (poll) ticks arrive slightly early, and a signed/unsigned comparison bug in
+  # nv_phy_module treats every early tick as a late slot -- the cell starts but
+  # never transmits a single slot. (Reference config sets carrying 0 predate
+  # this; do not copy them.)
+  tick_generator_mode: 1
 
 dapp:
   enabled: true              # sets data_core + e3_agent_enable in the L1 config

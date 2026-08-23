@@ -68,6 +68,32 @@ for k in isolcpus nohz_full rcu_nocbs; do
   v="$(printf '%s\n' "$CMD" | grep -oE "${k}=[^ ]+" || true)"
   if [ -n "$v" ]; then ok "$v"; else bad "$k missing from kernel cmdline (expected $k=...$REQ_ISOLCPUS)"; fi
 done
+# Deep cpuidle states add 40-450 us of wakeup latency to the L2 adapter's
+# timer thread, which must wake within 15 us of the slot boundary or every
+# slot errors out (0x34) and the DU transmits nothing. x86 recipes disable
+# them with idle=poll / processor.max_cstate=0 -- both of which ARM SILENTLY
+# IGNORES, so check the sysfs truth, not the cmdline. Fix (runtime, or wrap
+# in a boot-time systemd unit):
+#   for c in /sys/devices/system/cpu/cpu{4..19}/cpuidle/state*; do
+#     [ "$(cat $c/latency)" -gt 10 ] && echo 1 | sudo tee $c/disable; done
+DEEP_ON=0
+for st in /sys/devices/system/cpu/cpu[0-9]*/cpuidle/state*; do
+  [ -f "$st/latency" ] || continue
+  cpu="${st#/sys/devices/system/cpu/cpu}"; cpu="${cpu%%/*}"
+  case ",$(echo "$REQ_ISOLCPUS" | tr '-' ',')," in *",$cpu,"*) :;; *)
+    # only isolated cores matter; expand the a-b range crudely
+    lo="${REQ_ISOLCPUS%-*}"; hi="${REQ_ISOLCPUS#*-}"
+    { [ "$cpu" -ge "$lo" ] && [ "$cpu" -le "$hi" ]; } 2>/dev/null || continue;;
+  esac
+  if [ "$(cat "$st/latency")" -gt 10 ] && [ "$(cat "$st/disable" 2>/dev/null)" = 0 ]; then
+    DEEP_ON=$((DEEP_ON+1))
+  fi
+done
+if [ "$DEEP_ON" -gt 0 ]; then
+  bad "cpuidle: $DEEP_ON deep idle states ENABLED on isolated cores (>10 us exit latency) — timer ticks will miss the 15 us budget"
+else
+  ok "cpuidle: no deep idle states enabled on isolated cores"
+fi
 # nproc honours the caller's CPU affinity, and isolcpus removes the isolated
 # cores from the default scheduler domain -- so on a correctly isolated host a
 # plain `nproc` reports only the housekeeping cores. Report both, or "cores: 4"

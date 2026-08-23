@@ -115,13 +115,17 @@ fi
 
 # ------------------------------------------------------- L1<->L2 adapter
 # The adapter yaml ships alongside the controller template and site rendering
-# did not cover it. One key genuinely differs per site: tick_generator_mode --
-# the team's working DGX set uses 0 where upstream ships 1. Render our own
-# copy so a fresh clone does not silently revert to the upstream value.
+# did not cover it. tick_generator_mode MUST be 1 (sleep) on Aerial 26.1:
+# mode 0 (poll) fires each tick slightly EARLY, giving a negative tick_err,
+# and nv_phy_module compares that int64 against a uint64 threshold -- the
+# negative value wraps, every slot is declared late (err 0x34), and the DU
+# never transmits. Mode 1 wakes slightly late (positive err), which passes,
+# provided the host's deep cpuidle states are disabled so wakeup stays under
+# the 15 us threshold (see 20-preflight.sh).
 L2A_NAME="$(yq -r '.l2adapter_filename // ""' "$L1")"
 L2A_TPL="$(dirname "$TPL")/$L2A_NAME"
 L2A="$OUT/l2_adapter_config_site.yaml"
-TICK="$(s .aerial.tick_generator_mode)"; [ -n "$TICK" ] || TICK=0
+TICK="$(s .aerial.tick_generator_mode)"; [ -n "$TICK" ] || TICK=1
 if [ -n "$L2A_NAME" ] && [ -f "$L2A_TPL" ]; then
   cp "$L2A_TPL" "$L2A"
   yq -i ".tick_generator_mode = $TICK" "$L2A"
