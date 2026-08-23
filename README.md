@@ -19,7 +19,8 @@ aerial-k3s/
 ├── versions.env         ← pinned, mutually-validated version set
 ├── docs/
 │   ├── VERSIONS.md      ← verified matrix + what is NOT verified. Read first.
-│   └── AERIAL.md        ← how Aerial slots in under an OAI L2
+│   ├── AERIAL.md        ← how Aerial slots in under an OAI L2
+│   └── TROUBLESHOOTING.md ← every real bring-up failure: symptom → root cause → fix
 ├── scripts/
 │   ├── 00–06            ← Track A: tools → cluster → core → RAN → verify → scale
 │   ├── 10, 11, 12       ← inspect an existing deployment (read-only, redacted)
@@ -44,11 +45,42 @@ install guide. Everything from the RAN software up is fetched from scratch.
 ./scripts/20-preflight.sh      # is the host Aerial-ready? changes nothing
 ./scripts/21-fetch-stack.sh    # Aerial image (pulls anonymously) + OAI + dApp sources
 cp site.example.yaml site/site.yaml && $EDITOR site/site.yaml
-./scripts/31-build-stack.sh    # compile L1, build the L2 image — all from stack/
+./scripts/31-build-stack.sh    # compile L1 (FAPI 10_02 preset), build the L2 image
 ./scripts/32-install-k3s.sh    # cluster, pinned off the isolated cores
 ./scripts/33-render-config.sh  # site.yaml + upstream templates -> site/rendered/
+./scripts/34-deploy-du.sh      # one pod, two containers: Aerial L1 + OAI L2
 ./scripts/22-build-dapp.sh     # optional: PRB-Power dApp over the E3 interface
 ```
+
+Preflight is not decorative: it checks two host conditions that produce
+almost-undebuggable failures if wrong (deep CPU idle states, which ARM does
+NOT disable via `idle=poll`, and the PTP wire-timescale vs kernel-TAI-offset
+pairing). The build and deploy scripts likewise refuse known-bad states: an L1
+compiled with the wrong FAPI preset, or an L2 image that doesn't match the
+pinned OAI checkout.
+
+### Did it work? Verify layer by layer
+
+```bash
+# 1. Cell accepted: expect "PHY Cell Id = <your PCI>" and error_code=0x0
+kubectl exec -n ran deploy/aerial-du -c nv-cubb -- \
+  grep -E "PHY Cell Id|CONFIG.response|START.request" /tmp/phy.log
+
+# 2. Slots serving: this count must stay near zero
+kubectl exec -n ran deploy/aerial-du -c nv-cubb -- \
+  bash -c 'tail -n 2000 /tmp/phy.log | grep -c "Late slot"'
+
+# 3. Radio: on the RU (Benetel shown), on-time counters and uplink
+#    kpi.sh   ->  RX_ON_TIME(_C) counting, TX_TOTAL nonzero
+
+# 4. Core: the gNB registered over N2
+kubectl logs -n ran -l app.kubernetes.io/name=aerial-du -c oai-gnb | \
+  grep -E "NGSetupResponse|associated AMF"
+```
+
+Anything off at any layer: **[docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md)**
+documents every failure hit bringing up a real DGX Spark + O-RAN RU with this
+repo — each with the misleading symptom it produces and the actual fix.
 
 **Portability is the point.** Everything above works on a bare server: the
 sources are version-pinned clones, the tools install themselves, and every
