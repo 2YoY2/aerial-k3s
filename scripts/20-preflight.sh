@@ -94,6 +94,29 @@ if [ "$DEEP_ON" -gt 0 ]; then
 else
   ok "cpuidle: no deep idle states enabled on isolated cores"
 fi
+
+sec "PTP timescale consistency"
+# Aerial computes GPS frame numbering as CLOCK_REALTIME + kernel-TAI-offset;
+# the RU treats the PTP wire time as TAI directly. These must agree. With
+# phc2sys -O 0 the wire carries whatever timescale CLOCK_REALTIME has, so a
+# kernel TAI offset of 37 makes the DU number frames 37 s (= 116 frameIds)
+# away from the RU: the RU classifies 100% of C-plane as EARLY and discards
+# it. The cell starts, transmits, and stays stone dead. Consistent pairs:
+#   wire=TAI  (phc2sys -O -37 or -w, PHC stepped +37)  + kernel TAI 37
+#   wire=UTC  (phc2sys -O 0)                           + kernel TAI 0
+KTAI="$(python3 -c 'import time;print(int(round(time.clock_gettime(11)-time.time())))' 2>/dev/null)"
+P2S="$(pgrep -af '[p]hc2sys' | head -1)"
+if [ -z "$P2S" ]; then
+  warn "phc2sys not running — cannot judge the wire timescale"
+elif printf '%s' "$P2S" | grep -qE '(-O *0([^0-9-]|$))'; then
+  if [ "${KTAI:-0}" -eq 0 ]; then ok "wire=UTC (-O 0) and kernel TAI offset 0 — consistent"
+  else bad "phc2sys -O 0 puts CLOCK_REALTIME's timescale on the wire, but kernel TAI offset is ${KTAI}s — the DU will number frames ${KTAI}s away from the RU (all C-plane classified EARLY). Either zero the kernel TAI offset, or step the PHC to TAI and use phc2sys -O -37"; fi
+elif printf '%s' "$P2S" | grep -qE '(-O *-37|-w)'; then
+  if [ "${KTAI:-0}" -eq 37 ]; then ok "wire=TAI (phc2sys ${KTAI:+-O -37/-w}) and kernel TAI offset 37 — consistent"
+  else bad "phc2sys implies a TAI wire but kernel TAI offset is ${KTAI:-unknown}s (expected 37)"; fi
+else
+  warn "phc2sys offset mode unrecognized ($P2S) — verify wire timescale vs kernel TAI offset (${KTAI:-unknown}s) manually"
+fi
 # nproc honours the caller's CPU affinity, and isolcpus removes the isolated
 # cores from the default scheduler domain -- so on a correctly isolated host a
 # plain `nproc` reports only the housekeeping cores. Report both, or "cores: 4"
