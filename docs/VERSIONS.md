@@ -33,7 +33,7 @@ CONFIG.request TLV's length as megabytes, walks out of the message, logs
 `[CUPHY.PRACH_RX] ... pOccaPrms is null` — an error that reads like PRACH
 misconfiguration and diffs clean against every config file. (Verified against
 `scf_fapi_tl` in Aerial 26.1.1 and `pack_tl` in OAI `ATB1.0_integration`;
-observed on zion 2026-08-23 as `numTLVs=38` + 37 × `Unknown TLV 0`.)
+observed 2026-08-23 as `numTLVs=38` + 37 × `Unknown TLV 0`.)
 
 NIC firmware settings required for eCPRI flow steering and accurate TX
 scheduling: `FLEX_PARSER_PROFILE_ENABLE=4`, `PROG_PARSE_GRAPH=1`,
