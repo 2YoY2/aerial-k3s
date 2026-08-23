@@ -23,6 +23,18 @@ per-deployment values in `site/versions.env`.
 changes between releases. A mismatched pair does not fail at build time — it
 fails later at nFAPI handshake, which is a much harder thing to debug.
 
+**The L1 build preset is part of the contract.** cuBB must be built with
+`--preset 10_02 -- -DSCF_FAPI_10_04_SRS=ON -DENABLE_CONFORMANCE_TM_PDSCH_PDCCH=OFF`
+(what `31-build-stack.sh` now passes). The default `perf` preset sets
+`SCF_FAPI_10_04=ON`, which changes the TLV header from 16-bit to 32-bit length
+fields — OAI always writes 16-bit ones. A default-built L1 misreads the first
+CONFIG.request TLV's length as megabytes, walks out of the message, logs
+`Unknown TLV 0` for every remaining TLV, and rejects the cell with
+`[CUPHY.PRACH_RX] ... pOccaPrms is null` — an error that reads like PRACH
+misconfiguration and diffs clean against every config file. (Verified against
+`scf_fapi_tl` in Aerial 26.1.1 and `pack_tl` in OAI `ATB1.0_integration`;
+observed on zion 2026-08-23 as `numTLVs=38` + 37 × `Unknown TLV 0`.)
+
 NIC firmware settings required for eCPRI flow steering and accurate TX
 scheduling: `FLEX_PARSER_PROFILE_ENABLE=4`, `PROG_PARSE_GRAPH=1`,
 `REAL_TIME_CLOCK_ENABLE=1`, `ACCURATE_TX_SCHEDULER=1`, `CQE_COMPRESSION=1`.

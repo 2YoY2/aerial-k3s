@@ -32,6 +32,13 @@ command -v helm >/dev/null 2>&1 || die "helm not installed"
 kubectl get nodes >/dev/null 2>&1 || die "no reachable cluster — run ./scripts/32-install-k3s.sh"
 [ -x "$AERIAL_SRC/build.$ARCH/cuPHY-CP/cuphycontroller/examples/cuphycontroller_scf" ] \
   || die "no L1 binary — run ./scripts/31-build-stack.sh l1"
+# The FAPI TLV framing is a compile-time property of the L1: SCF_FAPI_10_04=ON
+# gives 32-bit TLV lengths, but OAI writes 16-bit ones. A default-preset build
+# passes every other check and then rejects the cell at CONFIG.request.
+CMC="$AERIAL_SRC/build.$ARCH/CMakeCache.txt"
+if [ -f "$CMC" ] && grep -Eq "^SCF_FAPI_10_04:[A-Z]+=ON" "$CMC"; then
+  die "L1 in build.$ARCH was compiled with SCF_FAPI_10_04=ON (32-bit TLV lengths); OAI's L2 frames TLVs with 16-bit lengths. Rebuild: rm -rf $AERIAL_SRC/build.$ARCH && ./scripts/31-build-stack.sh l1"
+fi
 docker image inspect oai-gnb-aerial:latest >/dev/null 2>&1 \
   || die "oai-gnb-aerial:latest missing — run ./scripts/31-build-stack.sh l2"
 # An oai-gnb-aerial:latest tag proves nothing about WHAT it was built from: a

@@ -77,7 +77,20 @@ build_l1() {
   done
   if [ -n "$script" ]; then
     echo "   using in-tree build script: $script"
-    cmd="chmod +x '$script' && ./'$script'"
+    # The preset is NOT optional. OAI frames every FAPI TLV with a 16-bit
+    # length field; Aerial's default (perf) preset compiles the L1 with
+    # SCF_FAPI_10_04=ON, whose TLV header carries a 32-bit length. A default-
+    # built L1 misreads the first TLV's length as megabytes, walks off the end
+    # of the CONFIG.request, logs every remaining TLV as "Unknown TLV 0", and
+    # rejects the cell with "pOccaPrms is null". The 10_02 preset plus the
+    # 10.04 SRS PDU flag is the exact pairing OAI's Aerial tutorial mandates.
+    # AERIAL_CUDA_ARCHS=121 skips the other CUDA targets (GB10 is sm_121).
+    case "$script" in
+      *build_aerial_sdk.sh)
+        cmd="chmod +x '$script' && ./'$script' --preset 10_02 ${AERIAL_CUDA_ARCHS:+--cuda-archs $AERIAL_CUDA_ARCHS} -- -DSCF_FAPI_10_04_SRS=ON -DENABLE_CONFORMANCE_TM_PDSCH_PDCCH=OFF" ;;
+      *)
+        cmd="chmod +x '$script' && ./'$script'" ;;
+    esac
   else
     echo "   No in-tree build script found. What this release ships:"
     ls -1 "$AERIAL_SRC"/*.sh 2>/dev/null | sed 's|.*/|     |'
