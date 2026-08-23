@@ -34,6 +34,19 @@ kubectl get nodes >/dev/null 2>&1 || die "no reachable cluster — run ./scripts
   || die "no L1 binary — run ./scripts/31-build-stack.sh l1"
 docker image inspect oai-gnb-aerial:latest >/dev/null 2>&1 \
   || die "oai-gnb-aerial:latest missing — run ./scripts/31-build-stack.sh l2"
+# An oai-gnb-aerial:latest tag proves nothing about WHAT it was built from: a
+# leftover image from an earlier setup deploys silently and then speaks a
+# different FAPI encoding to the L1 -- CONFIG.request TLVs misparse and the
+# cell is rejected with errors that look like PRACH misconfiguration.
+# 31-build-stack.sh records the OAI commit it built from; require a match.
+if [ -f "$STACK/.oai-gnb-aerial.commit" ]; then
+  BUILT="$(cat "$STACK/.oai-gnb-aerial.commit")"
+  HAVE="$(git -C "$STACK/openairinterface5g" rev-parse HEAD 2>/dev/null)"
+  [ "$BUILT" = "$HAVE" ] || [ "${SKIP_L2_CHECK:-0}" = 1 ] \
+    || die "oai-gnb-aerial:latest was built from $BUILT but stack/openairinterface5g is at $HAVE — run ./scripts/31-build-stack.sh l2 (or SKIP_L2_CHECK=1 to override)"
+elif [ "${SKIP_L2_CHECK:-0}" != 1 ]; then
+  die "no build record for oai-gnb-aerial:latest — this repo cannot prove the image matches stack/openairinterface5g. Run ./scripts/31-build-stack.sh l2 once (or SKIP_L2_CHECK=1 to deploy an image of unknown origin)"
+fi
 [ -f "$RENDERED/cuphycontroller_site.yaml" ] \
   || die "no rendered L1 config — run ./scripts/33-render-config.sh"
 echo "   cluster : $(kubectl get nodes -o jsonpath='{.items[0].metadata.name}' 2>/dev/null)"
@@ -48,10 +61,13 @@ step "Installing the rendered L1 config into the cuBB tree"
 cp -f "$RENDERED/cuphycontroller_site.yaml" "$CFGDIR/cuphycontroller_site.yaml" \
   || die "could not write $CFGDIR/cuphycontroller_site.yaml"
 echo "   $CFGDIR/cuphycontroller_site.yaml"
+# The rendered adapter config (tick_generator_mode from site.yaml) travels with it.
+[ -f "$RENDERED/l2_adapter_config_site.yaml" ] \
+  && cp -f "$RENDERED/l2_adapter_config_site.yaml" "$CFGDIR/l2_adapter_config_site.yaml"
 # The L1 config names its adapter file; make sure that file actually exists.
 L2A="$(grep -m1 '^l2adapter_filename:' "$CFGDIR/cuphycontroller_site.yaml" | awk '{print $2}')"
 [ -f "$CFGDIR/$L2A" ] || die "L1 config references $L2A but it is not in $CFGDIR"
-echo "   l2 adapter: $L2A (upstream default — CPU affinities not templated yet)"
+echo "   l2 adapter: $L2A"
 
 step "Namespace and gNB config"
 kubectl get ns "$NS" >/dev/null 2>&1 || kubectl create namespace "$NS"

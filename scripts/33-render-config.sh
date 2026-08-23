@@ -113,6 +113,25 @@ if [ "$(s .dapp.enabled)" = "true" ]; then
   echo "   dApp: E3 agent enabled on core $(s .cpu.data_core)"
 fi
 
+# ------------------------------------------------------- L1<->L2 adapter
+# The adapter yaml ships alongside the controller template and site rendering
+# did not cover it. One key genuinely differs per site: tick_generator_mode --
+# the team's working DGX set uses 0 where upstream ships 1. Render our own
+# copy so a fresh clone does not silently revert to the upstream value.
+L2A_NAME="$(yq -r '.l2adapter_filename // ""' "$L1")"
+L2A_TPL="$(dirname "$TPL")/$L2A_NAME"
+L2A="$OUT/l2_adapter_config_site.yaml"
+TICK="$(s .aerial.tick_generator_mode)"; [ -n "$TICK" ] || TICK=0
+if [ -n "$L2A_NAME" ] && [ -f "$L2A_TPL" ]; then
+  cp "$L2A_TPL" "$L2A"
+  yq -i ".tick_generator_mode = $TICK" "$L2A"
+  yq -i '.l2adapter_filename = "l2_adapter_config_site.yaml"' "$L1"
+  echo ">> L2 adapter template: $L2A_TPL (tick_generator_mode=$TICK)"
+else
+  echo ">> WARNING: adapter template $L2A_TPL not found — leaving l2adapter_filename untouched"
+  L2A=""
+fi
+
 # ---------------------------------------------------------------- L2 config
 # Pick the template matching this cell's bandwidth. OAI ships 106prb and
 # 273prb variants and the first alphabetically is 106 -- but the templates
@@ -197,6 +216,10 @@ for k in mps_sm_ul_order pusch_aggr_per_ctx prach_aggr_per_ctx; do
   [ -n "$want" ] && [ "$want" != "0" ] && [ "$want" != "null" ] \
     && ck "L1 $k" "$want" "$(yq ".cuphydriver_config.$k" "$L1")"
 done
+if [ -n "$L2A" ]; then
+  ck "L2A tick_generator_mode" "$TICK" "$(yq '.tick_generator_mode' "$L2A")"
+  ck "L1 l2adapter_filename" "l2_adapter_config_site.yaml" "$(yq -r '.l2adapter_filename' "$L1")"
+fi
 LAST=$(( $(yq ".cuphydriver_config.$CELLS | length" "$L1") - 1 ))
 ck "L1 cell$LAST pcp"  "$PCP" "$(yq ".cuphydriver_config.$CELLS[$LAST].pcp" "$L1")"
 ck "L1 cell$LAST T1a_min_cp_dl_ns" "$(s .ru.timing.T1a_min_cp_dl_ns)" \
@@ -236,5 +259,6 @@ if [ -f "$L2" ] && [ -n "$GT" ]; then
 fi
 echo
 echo ">> rendered: $L1"
+[ -n "$L2A" ] && echo ">> rendered: $L2A"
 [ -f "$L2" ] && echo ">> rendered: $L2"
 echo ">> review the diffs above, then: ./scripts/34-deploy-du.sh"

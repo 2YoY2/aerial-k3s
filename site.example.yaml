@@ -104,6 +104,8 @@ aerial:
   prach_aggr_per_ctx: 4
   pucch_aggr_per_ctx: 4
   srs_aggr_per_ctx: 3
+  # l2_adapter_config: upstream ships 1, working DGX deployments use 0.
+  tick_generator_mode: 0
 
 dapp:
   enabled: true              # sets data_core + e3_agent_enable in the L1 config

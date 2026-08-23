@@ -203,6 +203,12 @@ build_l2() {
 
   docker build -t oai-gnb-aerial:latest -f "$df" "$OAI_SRC" \
     || die "oai-gnb-aerial build failed"
+  # Record what the image was built from. 34-deploy-du.sh refuses to deploy an
+  # image whose provenance it cannot match to the current checkout: a stale
+  # oai-gnb-aerial:latest from an earlier setup speaks a different FAPI
+  # encoding and fails at CONFIG.request, far from any hint of the cause.
+  git -C "$OAI_SRC" rev-parse HEAD > "$STACK/.oai-gnb-aerial.commit" 2>/dev/null \
+    && echo "   provenance: $(cat "$STACK/.oai-gnb-aerial.commit")"
   echo "   built: oai-gnb-aerial:latest"
 }
 
