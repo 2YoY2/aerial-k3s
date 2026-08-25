@@ -76,6 +76,16 @@ finish() {
   printf '  %-34s %s\n' "PDU session failure/reject"  "$PDUFAIL"
   printf '  %-34s %s\n' "GTP-U tunnel / TEID lines"   "$TEID"
 
+  # Radio health. A session can exist on paper while the link underneath is
+  # collapsing -- and then packet counts on N3 look encouraging and point the
+  # investigation at the core, which is wrong.
+  RLF="$(ev 'UL Failure on PUSCH')"
+  REEST="$(ev 'Reestablishment')"
+  RASTORM="$(ev 'no free RA process')"
+  printf '  %-34s %s\n' "UL failures (PUSCH DTX)"      "$RLF"
+  printf '  %-34s %s\n' "RRC re-establishments"        "$REEST"
+  printf '  %-34s %s\n' "PRACH storm (no free RA)"     "$RASTORM"
+
   # Did the L1 actually detect preambles? Distinguishes "the UE never got on
   # the radio" from "it attached and the core refused it".
   kubectl exec -n "$NS" "$POD" -c nv-cubb -- \
@@ -96,7 +106,22 @@ finish() {
   printf '  %-34s %s\n' "downlink packets (UPF -> gNB)" "$DL"
 
   step "Verdict"
-  if [ "$RA" = 0 ] && [ "$RRC" = 0 ]; then
+  # Check the radio BEFORE the tunnel: a UE that keeps re-establishing still
+  # produces GTP-U packets, so tunnel counters alone read as healthy.
+  if [ "${RLF:-0}" -gt 5 ] || [ "${REEST:-0}" -gt 2 ] || [ "${RASTORM:-0}" -gt 20 ]; then
+    cat <<MSG
+  THE RADIO LINK IS UNSTABLE -- fix this before looking at the core, whatever
+  the tunnel counters below say. A UE that attaches, fails, and re-establishes
+  still creates a PDU session and still moves some packets on N3.
+    UL failures: $RLF   re-establishments: $REEST   phantom PRACH: $RASTORM
+  "$RASTORM" phantom RA attempts means cuPHY is detecting preambles in noise;
+  they also exhaust the RA process table and lock the real UE out. Check, in
+  order: the RACH parameters (zeroCorrelationZoneConfig above all), the uplink
+  power control (p0_nominal, preambleReceivedTargetPower), and only then the
+  RF path. With the RU's own RSSI at thermal noise, the fault is in the DU's
+  configuration, not in the air.
+MSG
+  elif [ "$RA" = 0 ] && [ "$RRC" = 0 ]; then
     cat <<MSG
   No UE reached the radio during this window. Either the UE never tried, or
   it cannot see the cell. Re-run while the UE is actively attaching.
