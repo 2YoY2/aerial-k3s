@@ -192,25 +192,42 @@ if [ -n "$GT" ]; then
   # preamble indices), heavy PUSCH DTX, and an RRC re-establishment loop that
   # reads as "the UE attaches but has no data".
   #
-  # pusch_FailureThres deserves its own note: OAI's default is 10, i.e. ten
-  # missed PUSCH and the UE is declared failed and descheduled. Real O-RAN
-  # deployments run it far higher, otherwise a few missed grants during
-  # bring-up tear the connection down before anything can be debugged.
-  for kv in zeroCorrelationZoneConfig:.cell.rach.zero_correlation_zone_config \
-            preambleReceivedTargetPower:.cell.rach.preamble_received_target_power \
-            preambleTransMax:.cell.rach.preamble_trans_max \
-            powerRampingStep:.cell.rach.power_ramping_step \
-            msg3_DeltaPreamble:.cell.rach.msg3_delta_preamble \
-            pMax:.cell.power.p_max \
-            p0_nominal:.cell.power.p0_nominal \
-            p0_NominalWithGrant:.cell.power.p0_nominal_with_grant \
-            pusch_FailureThres:.mac.pusch_failure_thres \
-            pusch_TargetSNRx10:.mac.pusch_target_snr_x10 \
-            pucch_TargetSNRx10:.mac.pucch_target_snr_x10 \
-            ul_max_mcs:.mac.ul_max_mcs; do
-    key="${kv%%:*}"; val="$(s "${kv#*:}")"
-    [ -n "$val" ] && [ "$val" != "null" ] && { setc "$key" "$val"; echo "   $key = $val"; }
-  done
+  # Some of these keys are ABSENT from the upstream template rather than
+  # merely different -- pusch_FailureThres in particular, where OAI's built-in
+  # default of 10 declares a UE failed after ten missed PUSCH and stops
+  # scheduling it. sed's substitute is a silent no-op on a missing key, so
+  # insert it after a key that is always present in the same block instead.
+  setc_or_add() { # setc_or_add <key> <value> <anchor-key>
+    if grep -qE "^[[:space:]]*$1[[:space:]]*=" "$L2"; then
+      setc "$1" "$2"
+    else
+      awk -v k="$1" -v v="$2" -v a="$3" '
+        { print }
+        !ins && $0 ~ "^[[:space:]]*" a "[[:space:]]*=" { print "  " k " = " v ";"; ins=1 }
+      ' "$L2" > "$L2.tmp" && mv "$L2.tmp" "$L2"
+    fi
+  }
+  put() { # put <key> <site.yaml path> <anchor-key>
+    local v; v="$(s "$2")"
+    [ -n "$v" ] && [ "$v" != "null" ] || return 0
+    setc_or_add "$1" "$v" "$3"
+    echo "   $1 = $v"
+  }
+  # Anchors: prach_ConfigurationIndex sits in servingCellConfigCommon and
+  # tr_s_preference in MACRLCs, and this script has already set both.
+  put zeroCorrelationZoneConfig    .cell.rach.zero_correlation_zone_config   prach_ConfigurationIndex
+  put preambleReceivedTargetPower  .cell.rach.preamble_received_target_power prach_ConfigurationIndex
+  put preambleTransMax             .cell.rach.preamble_trans_max             prach_ConfigurationIndex
+  put powerRampingStep             .cell.rach.power_ramping_step             prach_ConfigurationIndex
+  put msg3_DeltaPreamble           .cell.rach.msg3_delta_preamble            prach_ConfigurationIndex
+  put pMax                         .cell.power.p_max                         prach_ConfigurationIndex
+  put p0_nominal                   .cell.power.p0_nominal                    prach_ConfigurationIndex
+  put p0_NominalWithGrant          .cell.power.p0_nominal_with_grant         prach_ConfigurationIndex
+  put pusch_FailureThres           .mac.pusch_failure_thres                  tr_s_preference
+  put pusch_TargetSNRx10           .mac.pusch_target_snr_x10                 tr_s_preference
+  put pucch_TargetSNRx10           .mac.pucch_target_snr_x10                 tr_s_preference
+  put ul_max_mcs                   .mac.ul_max_mcs                           tr_s_preference
+
   # AMF address and the gNB's own N2/N3 bind address.
   sed -i -E "s|(ipv4[[:space:]]*=[[:space:]]*\")[0-9.]+|\1$(s .core.amf_ip)|" "$L2"
   sed -i -E "s|(GNB_IPV4_ADDRESS_FOR_NG_AMF[^\"]*\")[0-9./]+|\1$(s .core.gnb_n2_ip)|" "$L2"
