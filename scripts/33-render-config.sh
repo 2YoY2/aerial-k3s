@@ -182,6 +182,35 @@ if [ -n "$GT" ]; then
   setc nrofUplinkSlots "$(s .cell.tdd.ul_slots)"
   setc nrofUplinkSymbols "$(s .cell.tdd.ul_symbols)"
   setc tr_s_poll_core "$(s .cpu.oai_poll_core)"
+
+  # RACH and UL power control. NOT optional and NOT generic: the upstream
+  # template carries values for whichever RU it was written against, and the
+  # renderer used to leave them alone -- so a site inherited someone else's
+  # PRACH detection and power settings while every templated value looked
+  # right. Symptoms of the wrong ones are ugly and point elsewhere: cuPHY
+  # detecting preambles in thermal noise ("no free RA process" for random
+  # preamble indices), heavy PUSCH DTX, and an RRC re-establishment loop that
+  # reads as "the UE attaches but has no data".
+  #
+  # pusch_FailureThres deserves its own note: OAI's default is 10, i.e. ten
+  # missed PUSCH and the UE is declared failed and descheduled. Real O-RAN
+  # deployments run it far higher, otherwise a few missed grants during
+  # bring-up tear the connection down before anything can be debugged.
+  for kv in zeroCorrelationZoneConfig:.cell.rach.zero_correlation_zone_config \
+            preambleReceivedTargetPower:.cell.rach.preamble_received_target_power \
+            preambleTransMax:.cell.rach.preamble_trans_max \
+            powerRampingStep:.cell.rach.power_ramping_step \
+            msg3_DeltaPreamble:.cell.rach.msg3_delta_preamble \
+            pMax:.cell.power.p_max \
+            p0_nominal:.cell.power.p0_nominal \
+            p0_NominalWithGrant:.cell.power.p0_nominal_with_grant \
+            pusch_FailureThres:.mac.pusch_failure_thres \
+            pusch_TargetSNRx10:.mac.pusch_target_snr_x10 \
+            pucch_TargetSNRx10:.mac.pucch_target_snr_x10 \
+            ul_max_mcs:.mac.ul_max_mcs; do
+    key="${kv%%:*}"; val="$(s "${kv#*:}")"
+    [ -n "$val" ] && [ "$val" != "null" ] && { setc "$key" "$val"; echo "   $key = $val"; }
+  done
   # AMF address and the gNB's own N2/N3 bind address.
   sed -i -E "s|(ipv4[[:space:]]*=[[:space:]]*\")[0-9.]+|\1$(s .core.amf_ip)|" "$L2"
   sed -i -E "s|(GNB_IPV4_ADDRESS_FOR_NG_AMF[^\"]*\")[0-9./]+|\1$(s .core.gnb_n2_ip)|" "$L2"
@@ -240,6 +269,12 @@ if [ -f "${L2:-}" ]; then
   ck "L2 ul_symbols"   "$(s .cell.tdd.ul_symbols)" "$(gv nrofUplinkSymbols)"
   ck "L2 pusch ports"  "$(s .cell.pusch_antenna_ports)" "$(gv pusch_AntennaPorts)"
   ck "L2 tr_s_poll_core" "$(s .cpu.oai_poll_core)" "$(gv tr_s_poll_core)"
+  for kv in zeroCorrelationZoneConfig:.cell.rach.zero_correlation_zone_config \
+            p0_nominal:.cell.power.p0_nominal \
+            pusch_FailureThres:.mac.pusch_failure_thres; do
+    want="$(s "${kv#*:}")"
+    [ -n "$want" ] && [ "$want" != "null" ] && ck "L2 ${kv%%:*}" "$want" "$(gv "${kv%%:*}")"
+  done
   ck "L2 amf_ip" "$(s .core.amf_ip)" \
      "$(grep -m1 -oE 'ipv4[^"]*"[0-9.]+' "$L2" | grep -oE '[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+')"
   ck "L2 gnb_n2_ip" "$(s .core.gnb_n2_ip)" \

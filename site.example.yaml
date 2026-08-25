@@ -56,6 +56,21 @@ cell:
   pdsch_antenna_ports_n1: 2
   pusch_antenna_ports: 4
   prach_configuration_index: 0
+  # RACH detection and power ramping. These belong to the RU + RF environment,
+  # not to OAI's template: the wrong ones show up as cuPHY detecting preambles
+  # in thermal noise ("no free RA process" for random preamble indices) and a
+  # UE that attaches, fails PUSCH, and re-establishes in a loop.
+  rach:
+    zero_correlation_zone_config: 0
+    preamble_received_target_power: -100
+    preamble_trans_max: 8
+    power_ramping_step: 3      # 0=dB0 1=dB2 2=dB4 3=dB6
+    msg3_delta_preamble: 2
+  # UL power control. p0_* too high makes the UE undershoot the target SNR.
+  power:
+    p_max: 23
+    p0_nominal: -96
+    p0_nominal_with_grant: -96
   # TDD pattern — must match how the RU is provisioned.
   tdd:
     periodicity: 6           # 6 = 5 ms
@@ -63,6 +78,16 @@ cell:
     dl_symbols: 6
     ul_slots: 2
     ul_symbols: 4
+
+# MAC scheduler. pusch_failure_thres is the one that bites: OAI defaults to 10,
+# so ten missed PUSCH transmissions declare the UE failed and stop scheduling
+# it -- during bring-up that tears the connection down before you can look at
+# it. Real deployments run it far higher.
+mac:
+  pusch_failure_thres: 1000
+  pusch_target_snr_x10: 180
+  pucch_target_snr_x10: 220
+  ul_max_mcs: 28
 
 plmn:
   mcc: "001"
