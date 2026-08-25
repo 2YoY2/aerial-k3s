@@ -113,7 +113,33 @@ flows. Do not chase these warnings; do check for fixed NIC firmware
 eventually. Accurate TX scheduling also works on this NIC — it was explicitly
 exonerated during this debugging.
 
-## 6. Traps that cost real time
+## 6. UE attaches but has no internet
+
+Registration proves N1/N2 and the radio. Data is a different path entirely:
+GTP-U over N3 to the UPF, then the UPF's N6 side outward. The causes look
+identical from the UE, so capture all layers at once during one attach:
+
+```bash
+./scripts/35-watch-ue.sh        # then attach the UE; Ctrl-C when done
+```
+
+It records the gNB log, the N3 capture (UDP 2152) and the L1's PRACH activity,
+then prints which layer broke:
+
+- **No PDU session in the gNB log** — nothing was ever built to carry data.
+  The core decided that: subscriber not provisioned for the requested DNN,
+  slice mismatch against what the gNB advertises, or the SMF has no UPF for
+  that DNN. The failure cause code, if any, is in the captured log.
+- **Uplink packets only** — the UE's traffic leaves and the UPF never answers:
+  UDP 2152 filtered in one direction, or no route back to the gNB's NGU
+  address. Note that SCTP being permitted says nothing about GTP-U.
+- **Traffic both ways** — the RAN and N3 are fine; the fault is past the UPF.
+  Check DNS first (`ping 8.8.8.8` vs `ping google.com` from the UE — reaching
+  the IP but not the name means the SMF handed out an unreachable resolver),
+  then MTU (`ping -M do -s 1400`; GTP overhead makes a 1500-byte UE MTU
+  unusable), then N6/NAT for the UE pool.
+
+## 7. Traps that cost real time
 
 - **Stale L2 image:** an `oai-gnb-aerial:latest` left over from an earlier
   setup deploys silently and speaks a different FAPI encoding.
