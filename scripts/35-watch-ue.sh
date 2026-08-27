@@ -34,8 +34,26 @@ step "Preflight"
 need_tool kubectl >/dev/null || die "kubectl unavailable"
 command -v tcpdump >/dev/null 2>&1 || die "tcpdump not installed (sudo apt install -y tcpdump)"
 kubectl get pods -n "$NS" -l "$SEL" >/dev/null 2>&1 || die "no DU pod in namespace $NS"
-POD="$(kubectl get pods -n "$NS" -l "$SEL" -o jsonpath='{.items[0].metadata.name}' 2>/dev/null)"
-[ -n "$POD" ] || die "DU pod not found"
+# Pick a pod that is Running and NOT terminating. Right after a deploy the old
+# pod still exists in Terminating state and sorts first, so grabbing
+# items[0] attaches the capture to a pod that is about to die -- the log stream
+# ends immediately and the run reports "no UE reached the radio", which is a
+# lie about a cluster that is simply mid-rollout.
+POD=""
+for i in $(seq 1 60); do
+  POD="$(kubectl get pods -n "$NS" -l "$SEL" \
+        -o jsonpath='{range .items[?(@.metadata.deletionTimestamp=="")]}{.metadata.name} {.status.phase}{"\n"}{end}' \
+        2>/dev/null | awk '$2=="Running"{print $1; exit}')"
+  [ -n "$POD" ] && break
+  [ "$i" = 1 ] && echo "   waiting for a Running (non-terminating) DU pod..."
+  sleep 5
+done
+[ -n "$POD" ] || die "no Running DU pod appeared in namespace $NS after 5 minutes"
+# Ready means the L1 printed "L1 is ready!" -- before that there is no cell for
+# a UE to attach to, and capturing is pointless.
+if ! kubectl wait --for=condition=ready "pod/$POD" -n "$NS" --timeout=600s >/dev/null 2>&1; then
+  echo "   WARNING: $POD is Running but not Ready -- the L1 may still be initialising"
+fi
 
 # The gNB's own N3 address decides packet direction: src=N3 is uplink (gNB to
 # UPF), dst=N3 is downlink. Prefer site.yaml; fall back to the pod IP, which is
