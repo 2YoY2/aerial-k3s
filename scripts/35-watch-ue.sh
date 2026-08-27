@@ -39,11 +39,20 @@ kubectl get pods -n "$NS" -l "$SEL" >/dev/null 2>&1 || die "no DU pod in namespa
 # items[0] attaches the capture to a pod that is about to die -- the log stream
 # ends immediately and the run reports "no UE reached the radio", which is a
 # lie about a cluster that is simply mid-rollout.
+# Query each pod's fields individually. The tempting one-liner --
+#   -o jsonpath='{.items[?(@.metadata.deletionTimestamp=="")]...}'
+# -- does NOT work: kubectl's filter expressions do not match a field that is
+# ABSENT, so a healthy pod (which has no deletionTimestamp at all) is skipped
+# and the loop waits forever. Asking for a single missing field, by contrast,
+# reliably prints nothing.
 POD=""
 for i in $(seq 1 60); do
-  POD="$(kubectl get pods -n "$NS" -l "$SEL" \
-        -o jsonpath='{range .items[?(@.metadata.deletionTimestamp=="")]}{.metadata.name} {.status.phase}{"\n"}{end}' \
-        2>/dev/null | awk '$2=="Running"{print $1; exit}')"
+  for ref in $(kubectl get pods -n "$NS" -l "$SEL" -o name 2>/dev/null); do
+    name="${ref#pod/}"
+    del="$(kubectl get "$ref" -n "$NS" -o jsonpath='{.metadata.deletionTimestamp}' 2>/dev/null)"
+    ph="$(kubectl get "$ref" -n "$NS" -o jsonpath='{.status.phase}' 2>/dev/null)"
+    if [ -z "$del" ] && [ "$ph" = "Running" ]; then POD="$name"; break; fi
+  done
   [ -n "$POD" ] && break
   [ "$i" = 1 ] && echo "   waiting for a Running (non-terminating) DU pod..."
   sleep 5
