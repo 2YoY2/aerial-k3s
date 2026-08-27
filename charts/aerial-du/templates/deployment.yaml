@@ -93,7 +93,17 @@ spec:
             privileged: true
           command: ["bash", "-c"]
           args:
-            - "rm -f /tmp/phy.log && /opt/nvidia/cuBB/run_l1.sh {{ .Values.l1.configProfile }}"
+            # Rotate the host log as well as /tmp: $AERIAL_LOG_PATH/phy.log
+            # lives on a hostPath and SURVIVES restarts, so the readiness probe
+            # below would match an "L1 is ready!" from a previous boot and
+            # report a cell that never came up as healthy. Keep one generation
+            # for post-mortems.
+            - >-
+              rm -f /tmp/phy.log;
+              if [ -s {{ .Values.l1.logHostPath }}/phy.log ]; then
+              mv -f {{ .Values.l1.logHostPath }}/phy.log {{ .Values.l1.logHostPath }}/phy.log.prev;
+              fi;
+              exec /opt/nvidia/cuBB/run_l1.sh {{ .Values.l1.configProfile }}
           env:
             - name: cuBB_SDK
               value: /opt/nvidia/cuBB

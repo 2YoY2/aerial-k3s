@@ -139,7 +139,50 @@ then prints which layer broke:
   then MTU (`ping -M do -s 1400`; GTP overhead makes a 1500-byte UE MTU
   unusable), then N6/NAT for the UE pool.
 
-## 7. Traps that cost real time
+## 7. UE attaches erratically; no uplink; preambles "detected" in noise
+
+**Symptoms:** the RU is healthy (PTP locked, on-time C/U-plane, transmitting
+uplink packets, receiver at thermal noise) and the cell is up, but: the gNB
+logs `no free RA process` for dozens of RANDOM preamble indices per second;
+the UE attaches only occasionally and then loops through RRC re-establishment;
+`pucch0_DTX` and `ulsch_DTX` climb without bound; DL BLER approaches 1.0 with
+everything retransmitting to the last HARQ round. That last one is a
+consequence, not a cause -- with no HARQ-ACK arriving, every transport block
+retransmits and is counted an error.
+
+**Cause:** the DU's PRACH eAxC ids do not match the RU's. The DU listens on
+ports the RU never transmits on, so cuPHY correlates empty buffers and finds
+"preambles" in noise -- which is also why attach sometimes works: with false
+detections spraying across all 64 indices, one eventually matches the real UE's
+preamble in the right occasion, and the RA proceeds by luck. Meanwhile the RU's
+real PRACH arrives on ids the DU has assigned to SRS, so PRACH gets processed
+as SRS and can stall the uplink slot.
+
+**Fix:** read the eAxC table off the RU rather than from any config file. On a
+Benetel RANx50 it is `/etc/eaxc_X_Yt.xml` (X = software generation, Y = the
+transmit mode from `mimo_mode` in `/etc/ru_config.cfg`), and PRACH sits on
+ru-port **8-11**, not 4-7 -- the CUS-Plane user guide says explicitly that the
+O-DU must be configured to match. Set `ru.eaxc.prach` accordingly and move
+`ru.eaxc.srs` off those ids (the RU defines no separate SRS eAxC; SRS rides the
+uplink ids and is separated by section id).
+
+## 8. Fronthaul timing: use the vendor's O-DU delay profile, not a harvested one
+
+Every O-RAN RU vendor publishes an "O-DU delay profile" table, and it varies
+with RU firmware version AND with the DU implementation. Benetel's RANx50 L1
+interface specification tabulates, for V2.0 firmware driving a FlexRAN-style DU
+(the column Aerial matches): `T1a_cp_dl 419-470`, `T1a_cp_ul 390-405`,
+`T1a_up 294-345`, `Ta4 50-331` microseconds -- and its release notes call out
+that this firmware "requires tighter control of the DU t1a delay parameters".
+
+NVIDIA's shipped `cuphycontroller` templates already carry real profiles.
+Overwriting them with numbers harvested from an older deployment (e.g.
+`T1a_min_cp_dl` 419000 -> 7600, `T1a_min_cp_ul` 390000 -> 36000) makes the DU
+transmit outside the window the RU accepts, and the RU simply discards what it
+cannot use. Leave a value at 0 in `site.yaml` and this repo's renderer keeps the
+template's value, which is the safer default.
+
+## 9. Traps that cost real time
 
 - **Stale L2 image:** an `oai-gnb-aerial:latest` left over from an earlier
   setup deploys silently and speaks a different FAPI encoding.
